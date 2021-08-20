@@ -81,6 +81,17 @@ _import_structure = {
         "xnli_processors",
         "xnli_tasks_num_labels",
     ],
+    "data.data_collator": [
+        "DataCollator",
+        "DataCollatorForLanguageModeling",
+        "DataCollatorForPermutationLanguageModeling",
+        "DataCollatorForSeq2Seq",
+        "DataCollatorForSOP",
+        "DataCollatorForTokenClassification",
+        "DataCollatorForWholeWordMask",
+        "DataCollatorWithPadding",
+        "default_data_collator",
+    ],
     "feature_extraction_sequence_utils": ["BatchFeature", "SequenceFeatureExtractor"],
     "file_utils": [
         "CONFIG_NAME",
@@ -449,17 +460,6 @@ else:
 if is_torch_available():
     _import_structure["benchmark.benchmark"] = ["PyTorchBenchmark"]
     _import_structure["benchmark.benchmark_args"] = ["PyTorchBenchmarkArguments"]
-    _import_structure["data.data_collator"] = [
-        "DataCollator",
-        "DataCollatorForLanguageModeling",
-        "DataCollatorForPermutationLanguageModeling",
-        "DataCollatorForSeq2Seq",
-        "DataCollatorForSOP",
-        "DataCollatorForTokenClassification",
-        "DataCollatorForWholeWordMask",
-        "DataCollatorWithPadding",
-        "default_data_collator",
-    ]
     _import_structure["data.datasets"] = [
         "GlueDataset",
         "GlueDataTrainingArguments",
@@ -1751,6 +1751,17 @@ if TYPE_CHECKING:
         xnli_processors,
         xnli_tasks_num_labels,
     )
+    from .data.data_collator import (
+        DataCollator,
+        DataCollatorForLanguageModeling,
+        DataCollatorForPermutationLanguageModeling,
+        DataCollatorForSeq2Seq,
+        DataCollatorForSOP,
+        DataCollatorForTokenClassification,
+        DataCollatorForWholeWordMask,
+        DataCollatorWithPadding,
+        default_data_collator,
+    )
 
     # Feature Extractor
     from .feature_extraction_utils import BatchFeature, SequenceFeatureExtractor
@@ -2085,17 +2096,6 @@ if TYPE_CHECKING:
         # Benchmarks
         from .benchmark.benchmark import PyTorchBenchmark
         from .benchmark.benchmark_args import PyTorchBenchmarkArguments
-        from .data.data_collator import (
-            DataCollator,
-            DataCollatorForLanguageModeling,
-            DataCollatorForPermutationLanguageModeling,
-            DataCollatorForSeq2Seq,
-            DataCollatorForSOP,
-            DataCollatorForTokenClassification,
-            DataCollatorForWholeWordMask,
-            DataCollatorWithPadding,
-            default_data_collator,
-        )
         from .data.datasets import (
             GlueDataset,
             GlueDataTrainingArguments,
