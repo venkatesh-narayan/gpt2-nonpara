@@ -241,6 +241,7 @@ class BaseModelOutputWithPastAndCrossAttentions(ModelOutput):
     hidden_states: Optional[Tuple[torch.FloatTensor]] = None
     attentions: Optional[Tuple[torch.FloatTensor]] = None
     cross_attentions: Optional[Tuple[torch.FloatTensor]] = None
+    knn_emb: Optional[torch.FloatTensor] = None
 
 
 @dataclass
