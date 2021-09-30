@@ -67,7 +67,7 @@ class KNN_Dstore(object):
         return dists, knns
 
 
-    def get_knn_log_prob(self, queries, tgt, pad_idx):
+    def get_knn_log_prob(self, queries, src, pad_idx):
         def dist_func(d, k, q, function=None):
             if not function:
                 # Default behavior for L2 metric is to recompute distances.
@@ -96,24 +96,17 @@ class KNN_Dstore(object):
         # reshape: (TxB)xC
         qshape = queries.shape
         queries = queries.view(-1, qshape[-1])
-        tgt = tgt.contiguous().view(-1)
-        dists, knns = self.get_knns(queries[tgt != pad_idx])
+        src = src.contiguous().view(-1)
+        dists, knns = self.get_knns(queries[src != pad_idx])
+
         # (T_reducedxB)xK
         dists = torch.from_numpy(dists).cuda()
         start = time.time()
-        dists = dist_func(dists, knns, queries[tgt != pad_idx, :], function=self.sim_func)
+        dists = dist_func(dists, knns, queries[src != pad_idx, :], function=self.sim_func)
         probs = utils.log_softmax(dists, dim=-1)
 
-        index_mask = torch.eq(torch.from_numpy(self.vals[knns]).long().cuda().squeeze(-1), tgt[tgt != pad_idx].unsqueeze(-1)).float()
-        index_mask[index_mask == 0] = -10000 # for stability
-        index_mask[index_mask == 1] = 0
+        #(TxB)xV
+        full_knn_probs = torch.zeros((qshape[0] * qshape[1]), self.vals.shape[0]).cuda()
+        full_knn_probs[torch.from_numpy(self.vals[knns])] = probs
 
-        # (T_reducedxB)
-        yhat_knn_prob = torch.logsumexp(probs + index_mask, dim=-1).clone()
-        full_yhat_knn_prob = torch.full([qshape[0]*qshape[1]], -10000.0).cuda()
-        # import pdb; pdb.set_trace()
-        full_yhat_knn_prob[tgt != pad_idx] = yhat_knn_prob
-
-        # TxBx1
-        return full_yhat_knn_prob.view(qshape[0], qshape[1], 1)
-
+        return full_knn_probs.view(qshape[0], qshape[1], self.vals.shape[0]) # TxBxV
