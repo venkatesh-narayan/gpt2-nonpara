@@ -15,7 +15,6 @@
 # limitations under the License.
 """
 Fine-tuning the library models for causal language modeling (GPT, GPT-2, CTRL, ...) on a text file or a dataset.
-
 Here is the full list of checkpoints on the hub that can be fine-tuned by this script:
 https://huggingface.co/models?filter=causal-lm
 """
@@ -36,7 +35,7 @@ from transformers import (
     CONFIG_MAPPING,
     MODEL_FOR_CAUSAL_LM_MAPPING,
     AutoConfig,
-    AutoModelForCausalLM,
+    knnlmGPT2LMHeadModel, # switched automodel to knnlmgpt2
     AutoTokenizer,
     HfArgumentParser,
     Trainer,
@@ -51,7 +50,7 @@ from transformers.utils.versions import require_version
 
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
-check_min_version("4.10.0.dev0")
+check_min_version("4.11.0.dev0")
 
 require_version("datasets>=1.8.0", "To fix: pip install -r examples/pytorch/language-modeling/requirements.txt")
 
@@ -341,8 +340,9 @@ def main():
             "You can do it from another script, save it, and load it from here, using --tokenizer_name."
         )
 
+    # change model from auto to knnlmgpt2
     if model_args.model_name_or_path:
-        model = AutoModelForCausalLM.from_pretrained(
+        model = knnlmGPT2LMHeadModel.from_pretrained(
             model_args.model_name_or_path,
             from_tf=bool(".ckpt" in model_args.model_name_or_path),
             config=config,
@@ -351,7 +351,7 @@ def main():
             use_auth_token=True if model_args.use_auth_token else None,
         )
     else:
-        model = AutoModelForCausalLM.from_config(config)
+        model = knnlmGPT2LMHeadModel.from_config(config)
         n_params = sum(dict((p.data_ptr(), p.numel()) for p in model.parameters()).values())
         logger.info(f"Training new model from scratch - Total size={n_params/2**20:.2f}M params")
 
@@ -403,6 +403,10 @@ def main():
                 f"({tokenizer.model_max_length}). Using block_size={tokenizer.model_max_length}."
             )
         block_size = min(data_args.block_size, tokenizer.model_max_length)
+    
+    # for better results: adding sliding window strategy
+    # https://huggingface.co/transformers/v3.2.0/perplexity.html
+    stride = 512
 
     # Main data processing function that will concatenate all texts from our dataset and generate chunks of block_size.
     def group_texts(examples):
@@ -413,12 +417,18 @@ def main():
         # customize this part to your needs.
         if total_length >= block_size:
             total_length = (total_length // block_size) * block_size
-        # Split by chunks of max_len.
+        # Split by chunks of stride.
         result = {
-            k: [t[i : i + block_size] for i in range(0, total_length, block_size)]
+            k: [t[max(i + stride - block_size, 0) : i + stride] for i in range(0, total_length, stride)]
             for k, t in concatenated_examples.items()
         }
         result["labels"] = result["input_ids"].copy()
+
+        # sliding window strategy
+        for label in result["labels"]:
+            label[:-stride] = [-100] * (stride + 1)
+        model.start_idxs = [max(i + stride - block_size, 0) for i in range(0, total_length, stride)] # all beginning locations
+
         return result
 
     # Note that with `batched=True`, this map processes 1,000 texts together, so group_texts throws away a remainder
@@ -487,6 +497,7 @@ def main():
     if training_args.do_eval:
         logger.info("*** Evaluate ***")
 
+        # changed trainer.evaluate() for knnlm
         metrics = trainer.evaluate()
 
         max_eval_samples = data_args.max_eval_samples if data_args.max_eval_samples is not None else len(eval_dataset)
