@@ -26,6 +26,7 @@ import shutil
 import sys
 import time
 import warnings
+import argparse
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
 
@@ -176,6 +177,7 @@ if TYPE_CHECKING:
     import optuna
 
 logger = logging.get_logger(__name__)
+
 
 
 class Trainer:
@@ -460,6 +462,7 @@ class Trainer:
         # very last
         self._memory_tracker.stop_and_update_metrics()
 
+
     def add_callback(self, callback):
         """
         Add a callback to the current list of :class:`~transformer.TrainerCallback`.
@@ -470,6 +473,7 @@ class Trainer:
                In the first case, will instantiate a member of that class.
         """
         self.callback_handler.add_callback(callback)
+
 
     def pop_callback(self, callback):
         """
@@ -487,6 +491,7 @@ class Trainer:
         """
         return self.callback_handler.pop_callback(callback)
 
+
     def remove_callback(self, callback):
         """
         Remove a callback from the current list of :class:`~transformer.TrainerCallback`.
@@ -497,6 +502,7 @@ class Trainer:
                In the first case, will remove the first member of that class found in the list of callbacks.
         """
         self.callback_handler.remove_callback(callback)
+
 
     def _move_model_to_device(self, model, device):
         model = model.to(device)
@@ -594,6 +600,7 @@ class Trainer:
                     seed=self.args.seed,
                 )
 
+
     def get_train_dataloader(self) -> DataLoader:
         """
         Returns the training :class:`~torch.utils.data.DataLoader`.
@@ -640,6 +647,7 @@ class Trainer:
             pin_memory=self.args.dataloader_pin_memory,
         )
 
+
     def _get_eval_sampler(self, eval_dataset: Dataset) -> Optional[torch.utils.data.Sampler]:
         # Deprecated code
         if self.args.use_legacy_prediction_loop:
@@ -668,6 +676,7 @@ class Trainer:
                 num_processes=self.args.world_size,
                 process_index=self.args.process_index,
             )
+
 
     def get_eval_dataloader(self, eval_dataset: Optional[Dataset] = None) -> DataLoader:
         """
@@ -716,6 +725,7 @@ class Trainer:
             pin_memory=self.args.dataloader_pin_memory,
         )
 
+
     def get_test_dataloader(self, test_dataset: Dataset) -> DataLoader:
         """
         Returns the test :class:`~torch.utils.data.DataLoader`.
@@ -759,6 +769,8 @@ class Trainer:
             pin_memory=self.args.dataloader_pin_memory,
         )
 
+
+
     def create_optimizer_and_scheduler(self, num_training_steps: int):
         """
         Setup the optimizer and the learning rate scheduler.
@@ -768,7 +780,9 @@ class Trainer:
         and/or :obj:`create_scheduler`) in a subclass.
         """
         self.create_optimizer()
-        self.create_scheduler(num_training_steps)
+        self.create_scheduler(num_training_steps=num_training_steps, optimizer=self.optimizer)
+
+
 
     def create_optimizer(self):
         """
@@ -813,9 +827,14 @@ class Trainer:
         if is_sagemaker_mp_enabled():
             self.optimizer = smp.DistributedOptimizer(self.optimizer)
 
-    def create_scheduler(self, num_training_steps: int):
+        return self.optimizer
+
+
+
+    def create_scheduler(self, num_training_steps: int, optimizer: torch.optim.Optimizer = None):
         """
-        Setup the scheduler. The optimizer of the trainer must have been set up before this method is called.
+        Setup the scheduler. The optimizer of the trainer must have been set up either before this method is called or
+        passed as an argument.
 
         Args:
             num_training_steps (int): The number of training steps to do.
@@ -823,10 +842,13 @@ class Trainer:
         if self.lr_scheduler is None:
             self.lr_scheduler = get_scheduler(
                 self.args.lr_scheduler_type,
-                self.optimizer,
+                optimizer=self.optimizer if optimizer is None else optimizer,
                 num_warmup_steps=self.args.get_warmup_steps(num_training_steps),
                 num_training_steps=num_training_steps,
             )
+        return self.lr_scheduler
+
+
 
     def num_examples(self, dataloader: DataLoader) -> int:
         """
@@ -835,6 +857,7 @@ class Trainer:
         Will raise an exception if the underlying dataset does not implement method :obj:`__len__`
         """
         return len(dataloader.dataset)
+
 
     def _hp_search_setup(self, trial: Union["optuna.Trial", Dict[str, Any]]):
         """HP search setup code"""
@@ -979,6 +1002,7 @@ class Trainer:
             )
 
         return model
+
 
     def train(
         self,
@@ -1407,11 +1431,14 @@ class Trainer:
 
         return TrainOutput(self.state.global_step, train_loss, metrics)
 
+
     def _load_state_dict_in_model(self, state_dict):
         load_result = self.model.load_state_dict(state_dict, strict=False)
 
         if len(load_result.missing_keys) != 0:
-            if set(load_result.missing_keys) == set(self.model._keys_to_ignore_on_save):
+            if self.model._keys_to_ignore_on_save is not None and set(load_result.missing_keys) == set(
+                self.model._keys_to_ignore_on_save
+            ):
                 self.model.tie_weights()
             else:
                 logger.warn(f"There were missing keys in the checkpoint model loaded: {load_result.missing_keys}.")
@@ -1622,6 +1649,7 @@ class Trainer:
                 if self.use_amp and os.path.isfile(os.path.join(checkpoint, "scaler.pt")):
                     self.scaler.load_state_dict(torch.load(os.path.join(checkpoint, "scaler.pt")))
 
+
     def hyperparameter_search(
         self,
         hp_space: Optional[Callable[["optuna.Trial"], Dict[str, float]]] = None,
@@ -1704,6 +1732,8 @@ class Trainer:
         self.hp_search_backend = None
         return best_run
 
+
+
     def log(self, logs: Dict[str, float]) -> None:
         """
         Log :obj:`logs` on the various objects watching training.
@@ -1721,26 +1751,36 @@ class Trainer:
         self.state.log_history.append(output)
         self.control = self.callback_handler.on_log(self.args, self.state, self.control, logs)
 
+
+    def _prepare_input(self, data: Union[torch.Tensor, Any]) -> Union[torch.Tensor, Any]:
+        """
+        Prepares one :obj:`data` before feeding it to the model, be it a tensor or a nested list/dictionary of tensors.
+        """
+        if isinstance(data, dict):
+            return type(data)(**{k: self._prepare_input(v) for k, v in data.items()})
+        elif isinstance(data, (tuple, list)):
+            return type(data)(self._prepare_input(v) for v in data)
+        elif isinstance(data, torch.Tensor):
+            kwargs = dict(device=self.args.device)
+            if self.deepspeed and data.dtype != torch.int64:
+                # NLP models inputs are int64 and those get adjusted to the right dtype of the
+                # embedding. Other models such as wav2vec2's inputs are already float and thus
+                # may need special handling to match the dtypes of the model
+                kwargs.update(dict(dtype=self.args.hf_deepspeed_config.dtype()))
+            return data.to(**kwargs)
+        return data
+
     def _prepare_inputs(self, inputs: Dict[str, Union[torch.Tensor, Any]]) -> Dict[str, Union[torch.Tensor, Any]]:
         """
         Prepare :obj:`inputs` before feeding them to the model, converting them to tensors if they are not already and
         handling potential state.
         """
-        for k, v in inputs.items():
-            if isinstance(v, torch.Tensor):
-                kwargs = dict(device=self.args.device)
-                if self.deepspeed and inputs[k].dtype != torch.int64:
-                    # NLP models inputs are int64 and those get adjusted to the right dtype of the
-                    # embedding. Other models such as wav2vec2's inputs are already float and thus
-                    # may need special handling to match the dtypes of the model
-                    kwargs.update(dict(dtype=self.args.hf_deepspeed_config.dtype()))
-
-                inputs[k] = v.to(**kwargs)
-
+        inputs = self._prepare_input(inputs)
         if self.args.past_index >= 0 and self._past is not None:
             inputs["mems"] = self._past
 
         return inputs
+
 
     def training_step(self, model: nn.Module, inputs: Dict[str, Union[torch.Tensor, Any]]) -> torch.Tensor:
         """
@@ -1794,6 +1834,7 @@ class Trainer:
 
         return loss.detach()
 
+
     def compute_loss(self, model, inputs, return_outputs=False):
         """
         How the loss is computed by Trainer. By default, all models return the loss in the first element.
@@ -1805,6 +1846,41 @@ class Trainer:
         else:
             labels = None
         outputs = model(**inputs)
+
+        # for knnlm -- writing to datastore
+        if hasattr(model, args):
+            if model.args.save_knnlm_dstore:
+                assert model.start_idxs is not None # sanity check
+                dkeys = outputs.knn_emb[model.start_idxs[self.curr_location]:, self.curr_location, :]
+
+                assert dkeys is not None # just a sanity check
+                assert labels is not None # also a sanity check; need targets
+
+                # this shape is not necessarily correct; they do something with "start_indices" -- not sure what this is
+                # it seems it's usually just 0's, but might not be; dkeys might have to be changed
+                # need to check shapes of everything
+                shape = dkeys.shape 
+                if shape[0] == model.args.tokens_per_sample:
+                    if self.dstore_idx + shape[0] > model.args.dstore_size:
+                        shape = [model.args.dstore_size - self.dstore_idx]
+                        dkeys = dkeys[:shape[0]]
+                    if args.dstore_fp16:
+                        self.dstore_keys[self.dstore_idx:shape[0]+dstore_idx] = dkeys.view(
+                            -1, model.args.decoder_embed_dim).cpu().numpy().astype(np.float16)
+                        self.dstore_vals[self.dstore_idx:shape[0]+dstore_idx] = labels.view(
+                            -1, 1).cpu().numpy().astype(np.int)
+                    else:
+                        # assume pad = -100
+                        self.dstore_keys[self.dstore_idx:shape[0]+self.dstore_idx] = labels[labels.ne(-100)].view(
+                            -1, model.args.decoder_embed_dim).cpu().numpy().astype(np.float32)
+                        self.dstore_vals[self.dstore_idx:shape[0]+self.dstore_idx] = labels[labels.ne(-100)].view(
+                            -1, 1).cpu().numpy().astype(np.int)
+
+                    self.dstore_idx += shape[0]
+                else:
+                    print('Skipping this one with shape', shape)
+
+
         # Save past state if it exists
         # TODO: this needs to be fixed and made cleaner later.
         if self.args.past_index >= 0:
@@ -1818,12 +1894,14 @@ class Trainer:
 
         return (loss, outputs) if return_outputs else loss
 
+
     def is_local_process_zero(self) -> bool:
         """
         Whether or not this process is the local (e.g., on one machine if training in a distributed fashion on several
         machines) main process.
         """
         return self.args.local_process_index == 0
+
 
     def is_world_process_zero(self) -> bool:
         """
@@ -1836,6 +1914,7 @@ class Trainer:
             return smp.rank() == 0
         else:
             return self.args.process_index == 0
+
 
     def save_model(self, output_dir: Optional[str] = None):
         """
@@ -1885,6 +1964,7 @@ class Trainer:
 
         elif self.args.should_save:
             self._save(output_dir)
+
 
     def _save_tpu(self, output_dir: Optional[str] = None):
         output_dir = output_dir if output_dir is not None else self.args.output_dir
@@ -1997,6 +2077,7 @@ class Trainer:
             logger.info(f"Deleting older checkpoint [{checkpoint}] due to args.save_total_limit")
             shutil.rmtree(checkpoint)
 
+
     def evaluate(
         self,
         eval_dataset: Optional[Dataset] = None,
@@ -2066,6 +2147,8 @@ class Trainer:
 
         return output.metrics
 
+
+
     def predict(
         self, test_dataset: Dataset, ignore_keys: Optional[List[str]] = None, metric_key_prefix: str = "test"
     ) -> PredictionOutput:
@@ -2122,6 +2205,8 @@ class Trainer:
         self._memory_tracker.stop_and_update_metrics(output.metrics)
 
         return PredictionOutput(predictions=output.predictions, label_ids=output.label_ids, metrics=output.metrics)
+
+
 
     def evaluation_loop(
         self,
@@ -2194,6 +2279,31 @@ class Trainer:
         all_labels = None
         # Will be useful when we have an iterable dataset so don't know its length.
 
+        # for knnlm -- initializing datastore
+        if hasattr(model, args):
+            self.dstore_idx = 0
+            if model.args.knnlm and model.args.save_knnlm_dstore:
+                raise ValueError("Cannot use knnlm while trying to build the datastore!")
+
+            if model.args.save_knnlm_dstore:
+                print('keytype being saved:', model.args.knn_keytype)
+                if model.args.dstore_fp16:
+                    print('Saving fp16')
+                    self.dstore_keys = np.memmap(model.args.dstore_mmap+'_keys.npy', 
+                                                    dtype=np.float16, mode='w+', 
+                                                    shape=(model.args.dstore_size, model.args.decoder_embed_dim))
+                    self.dstore_vals = np.memmap(model.args.dstore_mmap+'_vals.npy', 
+                                                    dtype=np.int, mode='w+', 
+                                                    shape=(model.args.dstore_size, 1))
+                else:
+                    print('Saving fp32')
+                    self.dstore_keys = np.memmap(model.args.dstore_mmap+'_keys.npy', 
+                                                    dtype=np.float32, mode='w+', 
+                                                    shape=(model.args.dstore_size, model.args.decoder_embed_dim))
+                    self.dstore_vals = np.memmap(model.args.dstore_mmap+'_vals.npy', 
+                                                    dtype=np.int, mode='w+', 
+                                                    shape=(model.args.dstore_size, 1))
+
         observed_num_examples = 0
         # Main evaluation loop
         for step, inputs in enumerate(dataloader):
@@ -2201,6 +2311,11 @@ class Trainer:
             observed_batch_size = find_batch_size(inputs)
             if observed_batch_size is not None:
                 observed_num_examples += observed_batch_size
+                # For batch samplers, batch_size is not known by the dataloader in advance.
+                if batch_size is None:
+                    batch_size = observed_batch_size
+
+            self.curr_location = step # for knnlm -- indexing into start_idxs
 
             # Prediction step
             loss, logits, labels = self.prediction_step(model, inputs, prediction_loss_only, ignore_keys=ignore_keys)
@@ -2288,6 +2403,7 @@ class Trainer:
                 metrics[f"{metric_key_prefix}_{key}"] = metrics.pop(key)
 
         return EvalLoopOutput(predictions=all_preds, label_ids=all_labels, metrics=metrics, num_samples=num_samples)
+
 
     def _nested_gather(self, tensors, name=None):
         """
@@ -2406,8 +2522,9 @@ class Trainer:
                         logits_mb = raw_outputs
                     logits = smp_nested_concat(logits_mb)
             else:
+                # assuming has_labels is true; need targets for knnlm, and usually, targets is under labels
                 if has_labels:
-                    loss, outputs = self.compute_loss(model, inputs, return_outputs=True)
+                    loss, outputs = self.compute_loss(model, inputs, return_outputs=True) # adapted for saving dstore
                     loss = loss.mean().detach()
                     if isinstance(outputs, dict):
                         logits = tuple(v for k, v in outputs.items() if k not in ignore_keys + ["loss"])
@@ -2420,6 +2537,7 @@ class Trainer:
                             outputs = model(**inputs)
                     else:
                         outputs = model(**inputs)
+
                     if isinstance(outputs, dict):
                         logits = tuple(v for k, v in outputs.items() if k not in ignore_keys)
                     else:
@@ -2436,6 +2554,7 @@ class Trainer:
             logits = logits[0]
 
         return (loss, logits, labels)
+
 
     def floating_point_ops(self, inputs: Dict[str, Union[torch.Tensor, Any]]):
         """
@@ -2454,6 +2573,7 @@ class Trainer:
             return self.model.floating_point_ops(inputs)
         else:
             return 0
+
 
     def init_git_repo(self):
         """
@@ -2475,6 +2595,7 @@ class Trainer:
         if not os.path.exists(os.path.join(self.args.output_dir, ".gitignore")):
             with open(os.path.join(self.args.output_dir, ".gitignore"), "w", encoding="utf-8") as writer:
                 writer.writelines(["checkpoint-*/"])
+
 
     def create_model_card(
         self,
@@ -2504,6 +2625,7 @@ class Trainer:
         with open(os.path.join(self.args.output_dir, "README.md"), "w") as f:
             f.write(model_card)
 
+
     def push_to_hub(self, commit_message: Optional[str] = "add model", **kwargs) -> str:
         """
         Upload `self.model` and `self.tokenizer` to the 🤗 model hub on the repo `self.args.push_to_hub_model_id`.
@@ -2530,9 +2652,11 @@ class Trainer:
 
         return self.repo.push_to_hub(commit_message=commit_message)
 
+
     #
     # Deprecated code
     #
+
 
     def prediction_loop(
         self,
@@ -2658,6 +2782,7 @@ class Trainer:
                 metrics[f"{metric_key_prefix}_{key}"] = metrics.pop(key)
 
         return PredictionOutput(predictions=preds, label_ids=label_ids, metrics=metrics)
+
 
     def _gather_and_numpify(self, tensors, name):
         """
