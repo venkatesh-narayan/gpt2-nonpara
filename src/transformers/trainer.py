@@ -1849,7 +1849,7 @@ class Trainer:
 
         # for knnlm -- writing to datastore
         if hasattr(model, args):
-            if model.args.save_knnlm_dstore:
+            if model.knnlm_args.save_knnlm_dstore:
                 assert model.start_idxs is not None # sanity check
                 dkeys = outputs.knn_emb[model.start_idxs[self.curr_location]:, self.curr_location, :]
 
@@ -1859,20 +1859,20 @@ class Trainer:
                 # this shape is not necessarily correct; they do something with "start_indices" -- not sure what this is
                 # it seems it's usually just 0's, but might not be; dkeys might have to be changed
                 # need to check shapes of everything
-                shape = dkeys.shape 
-                if shape[0] == model.args.tokens_per_sample:
-                    if self.dstore_idx + shape[0] > model.args.dstore_size:
-                        shape = [model.args.dstore_size - self.dstore_idx]
+                shape = dkeys.shape
+                if shape[0] == model.knnlm_args.tokens_per_sample:
+                    if self.dstore_idx + shape[0] > model.knnlm_args.dstore_size:
+                        shape = [model.knnlm_args.dstore_size - self.dstore_idx]
                         dkeys = dkeys[:shape[0]]
                     if args.dstore_fp16:
                         self.dstore_keys[self.dstore_idx:shape[0]+dstore_idx] = dkeys.view(
-                            -1, model.args.decoder_embed_dim).cpu().numpy().astype(np.float16)
+                            -1, model.knnlm_args.decoder_embed_dim).cpu().numpy().astype(np.float16)
                         self.dstore_vals[self.dstore_idx:shape[0]+dstore_idx] = labels.view(
                             -1, 1).cpu().numpy().astype(np.int)
                     else:
                         # assume pad = -100
                         self.dstore_keys[self.dstore_idx:shape[0]+self.dstore_idx] = labels[labels.ne(-100)].view(
-                            -1, model.args.decoder_embed_dim).cpu().numpy().astype(np.float32)
+                            -1, model.knnlm_args.decoder_embed_dim).cpu().numpy().astype(np.float32)
                         self.dstore_vals[self.dstore_idx:shape[0]+self.dstore_idx] = labels[labels.ne(-100)].view(
                             -1, 1).cpu().numpy().astype(np.int)
 
@@ -2282,27 +2282,27 @@ class Trainer:
         # for knnlm -- initializing datastore
         if hasattr(model, args):
             self.dstore_idx = 0
-            if model.args.knnlm and model.args.save_knnlm_dstore:
+            if model.knnlm_args.knnlm and model.knnlm_args.save_knnlm_dstore:
                 raise ValueError("Cannot use knnlm while trying to build the datastore!")
 
-            if model.args.save_knnlm_dstore:
-                print('keytype being saved:', model.args.knn_keytype)
-                if model.args.dstore_fp16:
+            if model.knnlm_args.save_knnlm_dstore:
+                print('keytype being saved:', model.knnlm_args.knn_keytype)
+                if model.knnlm_args.dstore_fp16:
                     print('Saving fp16')
-                    self.dstore_keys = np.memmap(model.args.dstore_mmap+'_keys.npy', 
-                                                    dtype=np.float16, mode='w+', 
-                                                    shape=(model.args.dstore_size, model.args.decoder_embed_dim))
-                    self.dstore_vals = np.memmap(model.args.dstore_mmap+'_vals.npy', 
-                                                    dtype=np.int, mode='w+', 
-                                                    shape=(model.args.dstore_size, 1))
+                    self.dstore_keys = np.memmap(model.knnlm_args.dstore_mmap+'_keys.npy',
+                                                    dtype=np.float16, mode='w+',
+                                                    shape=(model.knnlm_args.dstore_size, model.knnlm_args.decoder_embed_dim))
+                    self.dstore_vals = np.memmap(model.knnlm_args.dstore_mmap+'_vals.npy',
+                                                    dtype=np.int, mode='w+',
+                                                    shape=(model.knnlm_args.dstore_size, 1))
                 else:
                     print('Saving fp32')
-                    self.dstore_keys = np.memmap(model.args.dstore_mmap+'_keys.npy', 
-                                                    dtype=np.float32, mode='w+', 
-                                                    shape=(model.args.dstore_size, model.args.decoder_embed_dim))
-                    self.dstore_vals = np.memmap(model.args.dstore_mmap+'_vals.npy', 
-                                                    dtype=np.int, mode='w+', 
-                                                    shape=(model.args.dstore_size, 1))
+                    self.dstore_keys = np.memmap(model.knnlm_args.dstore_mmap+'_keys.npy',
+                                                    dtype=np.float32, mode='w+',
+                                                    shape=(model.knnlm_args.dstore_size, model.knnlm_args.decoder_embed_dim))
+                    self.dstore_vals = np.memmap(model.knnlm_args.dstore_mmap+'_vals.npy',
+                                                    dtype=np.int, mode='w+',
+                                                    shape=(model.knnlm_args.dstore_size, 1))
 
         observed_num_examples = 0
         # Main evaluation loop

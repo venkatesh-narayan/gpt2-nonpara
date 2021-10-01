@@ -50,7 +50,7 @@ from transformers.utils.versions import require_version
 
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
-check_min_version("4.11.0.dev0")
+check_min_version("4.10.0.dev0")
 
 require_version("datasets>=1.8.0", "To fix: pip install -r examples/pytorch/language-modeling/requirements.txt")
 
@@ -248,6 +248,7 @@ def main():
     #
     # In distributed training, the load_dataset function guarantee that only one local process can concurrently
     # download the dataset.
+    print('***************got here 1*****************')
     if data_args.dataset_name is not None:
         # Downloading and loading a dataset from the hub.
         raw_datasets = load_dataset(
@@ -324,6 +325,8 @@ def main():
             logger.info(f"Overriding config: {model_args.config_overrides}")
             config.update_from_string(model_args.config_overrides)
 
+    print('************************got here 2***************************')
+
     tokenizer_kwargs = {
         "cache_dir": model_args.cache_dir,
         "use_fast": model_args.use_fast_tokenizer,
@@ -342,6 +345,8 @@ def main():
 
     # change model from auto to knnlmgpt2
     if model_args.model_name_or_path:
+        print('************* in here: model_args: ', model_args)
+
         model = knnlmGPT2LMHeadModel.from_pretrained(
             model_args.model_name_or_path,
             from_tf=bool(".ckpt" in model_args.model_name_or_path),
@@ -354,6 +359,8 @@ def main():
         model = knnlmGPT2LMHeadModel.from_config(config)
         n_params = sum(dict((p.data_ptr(), p.numel()) for p in model.parameters()).values())
         logger.info(f"Training new model from scratch - Total size={n_params/2**20:.2f}M params")
+
+    print('****************************got here 3********************************')
 
     model.resize_token_embeddings(len(tokenizer))
 
@@ -403,7 +410,7 @@ def main():
                 f"({tokenizer.model_max_length}). Using block_size={tokenizer.model_max_length}."
             )
         block_size = min(data_args.block_size, tokenizer.model_max_length)
-    
+
     # for better results: adding sliding window strategy
     # https://huggingface.co/transformers/v3.2.0/perplexity.html
     stride = 512

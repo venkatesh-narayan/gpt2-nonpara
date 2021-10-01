@@ -201,6 +201,7 @@ _import_structure = {
     "models.fsmt": ["FSMT_PRETRAINED_CONFIG_ARCHIVE_MAP", "FSMTConfig", "FSMTTokenizer"],
     "models.funnel": ["FUNNEL_PRETRAINED_CONFIG_ARCHIVE_MAP", "FunnelConfig", "FunnelTokenizer"],
     "models.gpt2": ["GPT2_PRETRAINED_CONFIG_ARCHIVE_MAP", "GPT2Config", "GPT2Tokenizer"],
+    "models.knnlm_gpt2": ["GPT2_PRETRAINED_CONFIG_ARCHIVE_MAP", "GPT2Config", "GPT2Tokenizer"],
     "models.gpt_neo": ["GPT_NEO_PRETRAINED_CONFIG_ARCHIVE_MAP", "GPTNeoConfig"],
     "models.herbert": ["HerbertTokenizer"],
     "models.hubert": ["HUBERT_PRETRAINED_CONFIG_ARCHIVE_MAP", "HubertConfig"],
@@ -354,6 +355,7 @@ if is_tokenizers_available():
     _import_structure["models.electra"].append("ElectraTokenizerFast")
     _import_structure["models.funnel"].append("FunnelTokenizerFast")
     _import_structure["models.gpt2"].append("GPT2TokenizerFast")
+    _import_structure["models.knnlm_gpt2"].append("GPT2TokenizerFast")
     _import_structure["models.herbert"].append("HerbertTokenizerFast")
     _import_structure["models.layoutlm"].append("LayoutLMTokenizerFast")
     _import_structure["models.led"].append("LEDTokenizerFast")
@@ -802,6 +804,17 @@ if is_torch_available():
             "GPT2Model",
             "GPT2PreTrainedModel",
             "load_tf_weights_in_gpt2",
+        ]
+    )
+    _import_structure["models.knnlm_gpt2"].extend(
+        [
+            "GPT2_PRETRAINED_MODEL_ARCHIVE_LIST",
+            "GPT2DoubleHeadsModel",
+            "GPT2ForSequenceClassification",
+            "knnlmGPT2LMHeadModel",
+            "GPT2Model",
+            "GPT2PreTrainedModel",
+            "load_tf_weights_in_gpt2"
         ]
     )
     _import_structure["models.gpt_neo"].extend(
@@ -2415,6 +2428,16 @@ if TYPE_CHECKING:
             GPT2PreTrainedModel,
             load_tf_weights_in_gpt2,
         )
+        from .models.knnlm_gpt2 import (
+            GPT2_PRETRAINED_MODEL_ARCHIVE_LIST,
+            GPT2DoubleHeadsModel,
+            GPT2ForSequenceClassification,
+            knnlmGPT2LMHeadModel,
+            GPT2Model,
+            GPT2PreTrainedModel,
+            load_tf_weights_in_gpt2,
+        )
+
         from .models.gpt_neo import (
             GPT_NEO_PRETRAINED_MODEL_ARCHIVE_LIST,
             GPTNeoForCausalLM,

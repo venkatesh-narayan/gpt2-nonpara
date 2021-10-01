@@ -52,6 +52,7 @@ from ...utils import logging
 from ...utils.model_parallel_utils import assert_device_map, get_device_map
 from .configuration_gpt2 import GPT2Config
 
+from fairseq.knnlm import KNN_Dstore
 
 logger = logging.get_logger(__name__)
 
@@ -570,7 +571,7 @@ class GPT2Model(GPT2PreTrainedModel):
         self.wpe = nn.Embedding(config.max_position_embeddings, self.embed_dim)
 
         self.drop = nn.Dropout(config.embd_pdrop)
-        self.h = nn.ModuleList([GPT2Block(config, get_ffn_input=(i == config.num_hidden_layers - 1)) 
+        self.h = nn.ModuleList([GPT2Block(config, get_ffn_input=(i == config.num_hidden_layers - 1))
                                 for i in range(config.num_hidden_layers)]) # for the last one, set get_ffn_input to true
         self.ln_f = nn.LayerNorm(self.embed_dim, eps=config.layer_norm_epsilon)
 
@@ -837,12 +838,6 @@ class GPT2Model(GPT2PreTrainedModel):
             knn_emb=self.knn_emb
         )
 
-
-# taken from knnlm/fairseq/sequence_scorer.py
-def gather_target_probs(probs, target):
-    probs = probs.gather(dim=2, index=target.unsqueeze(-1),)
-    return probs
-
 @add_start_docstrings(
     """
     The GPT2 Model transformer with a language modeling head on top (linear layer with weights tied to the input
@@ -853,40 +848,40 @@ def gather_target_probs(probs, target):
 
 class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
     _keys_to_ignore_on_load_missing = [r"attn.masked_bias", r"attn.bias", r"lm_head.weight"]
-    
+
     def __init__(self, config):
         super().__init__(config)
         self.transformer = GPT2Model(config)
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 
         self.init_weights()
-        
+
         # initialize args for KNN_Dstore
-        parser = self.get_parser()
-        self.args = self.add_transformer_args(parser)
-        self.args = self.add_other_needed_args(self.args)
-        self.args = self.set_args_by_config(self.args, config)
-        
+        knnlm_parser = self.get_knnlm_parser()
+        self.knnlm_args = self.add_transformer_args(knnlm_parser)
+        self.knnlm_args = self.add_other_needed_args(self.knnlm_args)
+        self.knnlm_args = self.set_args_by_config(self.knnlm_args, config)
+
         # check if dstore & faiss index exists
-        if self.args.knnlm:
-            dstore_path = (self.args.dstore_mmap 
-                           if self.args.dstore_mmap is not None 
-                           else self.args.dstore_filename)
+        if self.knnlm_args.knnlm:
+            dstore_path = (self.knnlm_args.dstore_mmap
+                           if self.knnlm_args.dstore_mmap is not None
+                           else self.knnlm_args.dstore_filename)
             if dstore_path is None:
                 raise ValueError("provide a dstore path")
             else:
                 if not os.path.exists(dstore_path + '_vals.npy'):
                     raise ValueError("dstore doesn't exist!")
-            
-            faiss_path = self.args.faiss_index
+
+            faiss_path = self.knnlm_args.faiss_index
             if faiss_path is None:
                 raise ValueError("provide faiss index path")
             else:
                 if not os.path.exists(faiss_path + '.trained'):
                     raise ValueError("no trained faiss index!")
-                    
+
             # at this point, we should be able to make KNN_Dstore
-            self.knn_dstore = KNN_Dstore(self.args)
+            self.knn_dstore = KNN_Dstore(self.knnlm_args)
 
         # for sliding window -- will be set in run_clm, when the data is being processed
         self.start_idxs = None
@@ -950,188 +945,188 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
         }
 
     # adapted from knnlm/fairseq/options.py
-    def get_parser(self):
-        parser = argparse.ArgumentParser()
-        
+    def get_knnlm_parser(self):
+        knnlm_parser = argparse.ArgumentParser()
+
         # minimal parser args
-        parser.add_argument('--seed', default=1, type=int, metavar='N',
+        knnlm_parser.add_argument('--seed', default=1, type=int, metavar='N',
                             help='pseudo random number generator seed')
-        parser.add_argument('--cpu', action='store_true', help='use CPU instead of CUDA')
-        parser.add_argument('--fp16', action='store_true', help='use FP16')
-        parser.add_argument('--memory-efficient-fp16', action='store_true',
+        knnlm_parser.add_argument('--cpu', action='store_true', help='use CPU instead of CUDA')
+        knnlm_parser.add_argument('--fp16', action='store_true', help='use FP16')
+        knnlm_parser.add_argument('--memory-efficient-fp16', action='store_true',
                             help='use a memory-efficient version of FP16 training; implies --fp16')
-        parser.add_argument('--fp16-no-flatten-grads', action='store_true',
+        knnlm_parser.add_argument('--fp16-no-flatten-grads', action='store_true',
                             help='don\'t flatten FP16 grads tensor')
-        parser.add_argument('--fp16-init-scale', default=2 ** 7, type=int,
+        knnlm_parser.add_argument('--fp16-init-scale', default=2 ** 7, type=int,
                             help='default FP16 loss scale')
-        parser.add_argument('--fp16-scale-window', type=int,
+        knnlm_parser.add_argument('--fp16-scale-window', type=int,
                             help='number of updates before increasing loss scale')
-        parser.add_argument('--fp16-scale-tolerance', default=0.0, type=float,
+        knnlm_parser.add_argument('--fp16-scale-tolerance', default=0.0, type=float,
                             help='pct of updates that can overflow before decreasing the loss scale')
-        parser.add_argument('--min-loss-scale', default=1e-4, type=float, metavar='D',
+        knnlm_parser.add_argument('--min-loss-scale', default=1e-4, type=float, metavar='D',
                             help='minimum FP16 loss scale, after which training is stopped')
-        parser.add_argument('--threshold-loss-scale', type=float,
+        knnlm_parser.add_argument('--threshold-loss-scale', type=float,
                             help='threshold FP16 loss scale from below')
-        parser.add_argument('--user-dir', default=None,
+        knnlm_parser.add_argument('--user-dir', default=None,
                             help='path to a python module containing custom extensions (tasks and/or architectures)')
-        parser.add_argument('--empty-cache-freq', default=0, type=int,
+        knnlm_parser.add_argument('--empty-cache-freq', default=0, type=int,
                             help='how often to clear the PyTorch CUDA cache (0 to disable)')
-        parser.add_argument('--all-gather-list-size', default=16384, type=int,
+        knnlm_parser.add_argument('--all-gather-list-size', default=16384, type=int,
                             help='number of bytes reserved for gathering stats from workers')
-                        
+
         # eval_lm args
-        parser.add_argument('--output-word-probs', action='store_true',
+        knnlm_parser.add_argument('--output-word-probs', action='store_true',
                         help='if set, outputs words and their predicted log probabilities to standard output')
-        parser.add_argument('--output-word-stats', action='store_true',
+        knnlm_parser.add_argument('--output-word-stats', action='store_true',
                         help='if set, outputs word statistics such as word count, average probability, etc')
-        parser.add_argument('--context-window', default=0, type=int, metavar='N',
+        knnlm_parser.add_argument('--context-window', default=0, type=int, metavar='N',
                         help='ensures that every evaluated token has access to a context of at least this size,'
                                 ' if possible')
-        parser.add_argument('--softmax-batch', default=sys.maxsize, type=int, metavar='N',
+        knnlm_parser.add_argument('--softmax-batch', default=sys.maxsize, type=int, metavar='N',
                         help='if BxT is more than this, will batch the softmax over vocab to this amount of tokens'
                                 ' in order to fit into GPU memory')
-        parser.add_argument('--lm-eval', default=True, action='store_true',
+        knnlm_parser.add_argument('--lm-eval', default=True, action='store_true',
                         help='helpful for certain ops that are only used during eval')
-        parser.add_argument('--knnlm', action='store_true',
+        knnlm_parser.add_argument('--knnlm', action='store_true',
                         help='use the k-nearest neighbors language model')
-        parser.add_argument('--save-knnlm-dstore', action='store_true',
+        knnlm_parser.add_argument('--save-knnlm-dstore', action='store_true',
                         help='save keys for the knnlm datastore')
-        parser.add_argument('--dstore-mmap', default=None, type=str,
+        knnlm_parser.add_argument('--dstore-mmap', default=None, type=str,
                         help='If saving knnlm dstore, save keys and values to this file')
-        parser.add_argument('--dstore-size', default=0, type=int,
+        knnlm_parser.add_argument('--dstore-size', default=0, type=int,
                         help='size of datastore')
-                        
-        return parser
-    
+
+        return knnlm_parser
+
     # taken directly from knnlm/fairseq/models/transformer_lm.py
-    def add_transformer_args(self, parser):
+    def add_transformer_args(self, knnlm_parser):
         # fmt: off
-        parser.add_argument('--activation-fn', help='activation function to use')
-        
-        parser.add_argument('--dropout', type=float, metavar='D',
+        knnlm_parser.add_argument('--activation-fn', help='activation function to use')
+
+        knnlm_parser.add_argument('--dropout', type=float, metavar='D',
                             help='dropout probability')
-        parser.add_argument('--attention-dropout', type=float, metavar='D',
+        knnlm_parser.add_argument('--attention-dropout', type=float, metavar='D',
                             help='dropout probability for attention weights')
-        parser.add_argument('--activation-dropout', '--relu-dropout', type=float, metavar='D',
+        knnlm_parser.add_argument('--activation-dropout', '--relu-dropout', type=float, metavar='D',
                             help='dropout probability after activation in FFN.')
-        
-        parser.add_argument('--decoder-embed-dim', type=int, metavar='N',
+
+        knnlm_parser.add_argument('--decoder-embed-dim', type=int, metavar='N',
                             help='decoder embedding dimension')
-        parser.add_argument('--decoder-output-dim', type=int, metavar='N',
+        knnlm_parser.add_argument('--decoder-output-dim', type=int, metavar='N',
                             help='decoder output dimension')
-        parser.add_argument('--decoder-input-dim', type=int, metavar='N',
+        knnlm_parser.add_argument('--decoder-input-dim', type=int, metavar='N',
                             help='decoder input dimension')
-        parser.add_argument('--decoder-ffn-embed-dim', type=int, metavar='N',
+        knnlm_parser.add_argument('--decoder-ffn-embed-dim', type=int, metavar='N',
                             help='decoder embedding dimension for FFN')
-        
-        parser.add_argument('--decoder-layers', type=int, metavar='N',
+
+        knnlm_parser.add_argument('--decoder-layers', type=int, metavar='N',
                             help='num decoder layers')
-        parser.add_argument('--decoder-attention-heads', type=int, metavar='N',
+        knnlm_parser.add_argument('--decoder-attention-heads', type=int, metavar='N',
                             help='num decoder attention heads')
-        parser.add_argument('--decoder-normalize-before', action='store_true',
+        knnlm_parser.add_argument('--decoder-normalize-before', action='store_true',
                             help='apply layernorm before each decoder block')
-        parser.add_argument('--no-decoder-final-norm', action='store_true',
+        knnlm_parser.add_argument('--no-decoder-final-norm', action='store_true',
                             help='don\'t add an extra layernorm after the last decoder block')
-        
-        parser.add_argument('--adaptive-softmax-cutoff', metavar='EXPR',
+
+        knnlm_parser.add_argument('--adaptive-softmax-cutoff', metavar='EXPR',
                             help='comma separated list of adaptive softmax cutoff points. '
                                 'Must be used with adaptive_loss criterion')
-        parser.add_argument('--adaptive-softmax-dropout', type=float, metavar='D',
+        knnlm_parser.add_argument('--adaptive-softmax-dropout', type=float, metavar='D',
                             help='sets adaptive softmax dropout for the tail projections')
-        parser.add_argument('--adaptive-softmax-factor', type=float, metavar='N',
+        knnlm_parser.add_argument('--adaptive-softmax-factor', type=float, metavar='N',
                             help='adaptive input factor')
-        
-        parser.add_argument('--no-token-positional-embeddings', action='store_true',
+
+        knnlm_parser.add_argument('--no-token-positional-embeddings', action='store_true',
                             help='if set, disables positional embeddings (outside self attention)')
-        parser.add_argument('--share-decoder-input-output-embed', action='store_true',
+        knnlm_parser.add_argument('--share-decoder-input-output-embed', action='store_true',
                             help='share decoder input and output embeddings')
-        parser.add_argument('--character-embeddings', action='store_true',
+        knnlm_parser.add_argument('--character-embeddings', action='store_true',
                             help='if set, uses character embedding convolutions to produce token embeddings')
-        parser.add_argument('--character-filters', type=str, metavar='LIST',
+        knnlm_parser.add_argument('--character-filters', type=str, metavar='LIST',
                             default='[(1, 64), (2, 128), (3, 192), (4, 256), (5, 256), (6, 256), (7, 256)]',
                             help='size of character embeddings')
-        parser.add_argument('--character-embedding-dim', default=4, type=int, metavar='N',
+        knnlm_parser.add_argument('--character-embedding-dim', default=4, type=int, metavar='N',
                             help='size of character embeddings')
-        parser.add_argument('--char-embedder-highway-layers', default=2, type=int, metavar='N',
+        knnlm_parser.add_argument('--char-embedder-highway-layers', default=2, type=int, metavar='N',
                             help='number of highway layers for character token embeddder')
-        
-        parser.add_argument('--adaptive-input', action='store_true',
+
+        knnlm_parser.add_argument('--adaptive-input', action='store_true',
                             help='if set, uses adaptive input')
-        parser.add_argument('--adaptive-input-factor', type=float, metavar='N',
+        knnlm_parser.add_argument('--adaptive-input-factor', type=float, metavar='N',
                             help='adaptive input factor')
-        parser.add_argument('--adaptive-input-cutoff', metavar='EXPR',
+        knnlm_parser.add_argument('--adaptive-input-cutoff', metavar='EXPR',
                             help='comma separated list of adaptive input cutoff points.')
-        parser.add_argument('--tie-adaptive-weights', action='store_true',
+        knnlm_parser.add_argument('--tie-adaptive-weights', action='store_true',
                             help='if set, ties the weights of adaptive softmax and adaptive input')
-        parser.add_argument('--tie-adaptive-proj', action='store_true',
+        knnlm_parser.add_argument('--tie-adaptive-proj', action='store_true',
                             help='if set, ties the projection weights of adaptive softmax and adaptive input')
-        
-        parser.add_argument('--decoder-learned-pos', action='store_true',
+
+        knnlm_parser.add_argument('--decoder-learned-pos', action='store_true',
                             help='use learned positional embeddings in the decoder')
         # args for "Reducing Transformer Depth on Demand with Structured Dropout" (Fan et al., 2019)
-        parser.add_argument('--decoder-layerdrop', type=float, metavar='D', default=0,
+        knnlm_parser.add_argument('--decoder-layerdrop', type=float, metavar='D', default=0,
                             help='LayerDrop probability for decoder')
-        parser.add_argument('--decoder-layers-to-keep', default=None,
+        knnlm_parser.add_argument('--decoder-layers-to-keep', default=None,
                             help='which layers to *keep* when pruning as a comma-separated list')
-        parser.add_argument('--layernorm-embedding', action='store_true',
+        knnlm_parser.add_argument('--layernorm-embedding', action='store_true',
                             help='add layernorm to embedding')
-        parser.add_argument('--no-scale-embedding', action='store_true',
+        knnlm_parser.add_argument('--no-scale-embedding', action='store_true',
                             help='if True, dont scale embeddings')
-                            
-        return parser.parse_args()
-    
+
+        return knnlm_parser.parse_args()
+
     # add args that aren't in transformer args
-    def add_other_needed_args(self, args):
-        if not args.dstore_filename:
-            args.dstore_filename = getattr(args, 'dstore_filename', args.dstore_mmap)
-        
-        if not args.faiss_index:
-            args.faiss_index = getattr(args, 'faiss_index', args.dstore_mmap + 'knn.index')
-            args.indexfile = getattr(args, 'indexfile', args.faiss_index)
-        
-        return args
+    def add_other_needed_args(self, knnlm_args):
+        if not knnlm_args.dstore_filename:
+            knnlm_args.dstore_filename = getattr(knnlm_args, 'dstore_filename', knnlm_args.dstore_mmap)
+
+        if not knnlm_args.faiss_index:
+            knnlm_args.faiss_index = getattr(knnlm_args, 'faiss_index', knnlm_args.dstore_mmap + 'knn.index')
+            knnlm_args.indexfile = getattr(knnlm_args, 'indexfile', knnlm_args.faiss_index)
+
+        return knnlm_args
 
     # based on gpt2config provided in model init, set args for KNN_Dstore accordingly
     # more details about config at https://huggingface.co/transformers/model_doc/gpt2.html#transformers.GPT2Config
     # matched from that ^ and knnlm/fairseq/models/transformer_lm.py
-    def set_args_by_config(args, config):
-        args.activation_fn                    = getattr(args, 'activation_fn', config.activation_function)
-        
-        args.dropout                          = getattr(args, 'dropout', config.embd_pdrop)
-        args.attention_dropout                = getattr(args, 'attention_dropout', config.attn_pdrop)
-        args.activation_dropout               = getattr(args, 'activation_dropout', config.resid_pdrop)
-        
-        args.decoder_embed_dim                = getattr(args, 'decoder_embed_dim', config.n_embd)
-        args.decoder_output_dim               = getattr(args, 'decoder_output_dim', config.n_embd)
-        args.decoder_input_dim                = getattr(args, 'decoder_input_dim', config.n_embd)
-        args.decoder_ffn_embed_dim            = getattr(args, 'decoder_ffn_embed_dim', config.n_embd * 4)
-        
-        args.decoder_layers                   = getattr(args, 'decoder_layers', config.n_layer)
-        args.decoder_attention_heads          = getattr(args, 'decoder_attention_heads', config.n_head)
-        args.decoder_normalize_before         = getattr(args, 'decoder_normalize_before', True)
-        args.no_decoder_final_norm            = getattr(args, 'no_decoder_final_norm', False)
-        
-        args.add_bos_token                    = getattr(args, 'add_bos_token', False)
-        args.no_token_positional_embeddings   = getattr(args, 'no_token_positional_embeddings', False)
-        args.share_decoder_input_output_embed = getattr(args, 'share_decoder_input_output_embed', False)
-        args.character_embeddings             = getattr(args, 'character_embeddings', False)
-        
-        args.adaptive_softmax_cutoff          = getattr(args, 'adaptive_softmax_cutoff', None)
-        args.adaptive_softmax_dropout         = getattr(args, 'adaptive_softmax_dropout', 0)
-        args.adaptive_softmax_factor          = getattr(args, 'adaptive_softmax_factor', 4)
-        args.decoder_learned_pos              = getattr(args, 'decoder_learned_pos', False)
-        
-        args.adaptive_input                   = getattr(args, 'adaptive_input', False)
-        args.adaptive_input_factor            = getattr(args, 'adaptive_input_factor', 4)
-        args.adaptive_input_cutoff            = getattr(args, 'adaptive_input_cutoff', None)
+    def set_args_by_config(self, knnlm_args, config):
+        knnlm_args.activation_fn                    = getattr(knnlm_args, 'activation_fn', config.activation_function)
 
-        args.tie_adaptive_weights             = getattr(args, 'tie_adaptive_weights', False)
-        args.tie_adaptive_proj                = getattr(args, 'tie_adaptive_proj', False)
+        knnlm_args.dropout                          = getattr(knnlm_args, 'dropout', config.embd_pdrop)
+        knnlm_args.attention_dropout                = getattr(knnlm_args, 'attention_dropout', config.attn_pdrop)
+        knnlm_args.activation_dropout               = getattr(knnlm_args, 'activation_dropout', config.resid_pdrop)
 
-        args.no_scale_embedding               = getattr(args, 'no_scale_embedding', False)
-        args.layernorm_embedding              = getattr(args, 'layernorm_embedding', False)
-        
-        return args
+        knnlm_args.decoder_embed_dim                = getattr(knnlm_args, 'decoder_embed_dim', config.n_embd)
+        knnlm_args.decoder_output_dim               = getattr(knnlm_args, 'decoder_output_dim', config.n_embd)
+        knnlm_args.decoder_input_dim                = getattr(knnlm_args, 'decoder_input_dim', config.n_embd)
+        knnlm_args.decoder_ffn_embed_dim            = getattr(knnlm_args, 'decoder_ffn_embed_dim', config.n_embd * 4)
+
+        knnlm_args.decoder_layers                   = getattr(knnlm_args, 'decoder_layers', config.n_layer)
+        knnlm_args.decoder_attention_heads          = getattr(knnlm_args, 'decoder_attention_heads', config.n_head)
+        knnlm_args.decoder_normalize_before         = getattr(knnlm_args, 'decoder_normalize_before', True)
+        knnlm_args.no_decoder_final_norm            = getattr(knnlm_args, 'no_decoder_final_norm', False)
+
+        knnlm_args.add_bos_token                    = getattr(knnlm_args, 'add_bos_token', False)
+        knnlm_args.no_token_positional_embeddings   = getattr(knnlm_args, 'no_token_positional_embeddings', False)
+        knnlm_args.share_decoder_input_output_embed = getattr(knnlm_args, 'share_decoder_input_output_embed', False)
+        knnlm_args.character_embeddings             = getattr(knnlm_args, 'character_embeddings', False)
+
+        knnlm_args.adaptive_softmax_cutoff          = getattr(knnlm_args, 'adaptive_softmax_cutoff', None)
+        knnlm_args.adaptive_softmax_dropout         = getattr(knnlm_args, 'adaptive_softmax_dropout', 0)
+        knnlm_args.adaptive_softmax_factor          = getattr(knnlm_args, 'adaptive_softmax_factor', 4)
+        knnlm_args.decoder_learned_pos              = getattr(knnlm_args, 'decoder_learned_pos', False)
+
+        knnlm_args.adaptive_input                   = getattr(knnlm_args, 'adaptive_input', False)
+        knnlm_args.adaptive_input_factor            = getattr(knnlm_args, 'adaptive_input_factor', 4)
+        knnlm_args.adaptive_input_cutoff            = getattr(knnlm_args, 'adaptive_input_cutoff', None)
+
+        knnlm_args.tie_adaptive_weights             = getattr(knnlm_args, 'tie_adaptive_weights', False)
+        knnlm_args.tie_adaptive_proj                = getattr(knnlm_args, 'tie_adaptive_proj', False)
+
+        knnlm_args.no_scale_embedding               = getattr(knnlm_args, 'no_scale_embedding', False)
+        knnlm_args.layernorm_embedding              = getattr(knnlm_args, 'layernorm_embedding', False)
+
+        return knnlm_args
 
     # taken from knnlm/fairseq/sequence_scorer.py
     def combine_knn_and_vocab_probs(self, knn_p, vocab_p, coeff):
@@ -1142,7 +1137,7 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
         curr_prob = torch.logsumexp(combine_probs + coeffs, dim=0)
 
         return curr_prob
-    
+
     @add_start_docstrings_to_model_forward(GPT2_INPUTS_DOCSTRING)
     @add_code_sample_docstrings(
         tokenizer_class=_TOKENIZER_FOR_DOC,
@@ -1202,27 +1197,27 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
         if self.model_parallel:
             torch.cuda.set_device(self.transformer.first_device)
             hidden_states = hidden_states.to(self.lm_head.weight.device)
-        
+
         lm_logits = self.lm_head(hidden_states)
-        
+
         # for knnlm -- interpolation
-        if self.args.knnlm:
+        if self.knnlm_args.knnlm:
             # assume it's always last_ffn_input for now
-            assert self.args.knn_keytype == 'last_ffn_input'
+            assert self.knnlm_args.knn_keytype == 'last_ffn_input'
             assert knn_emb is not None, "didn't get any knn embeddings!"
             queries = knn_emb
 
             # padding is usually -100 in huggingface transformers models
             yhat_knn_prob = self.knn_dstore.get_knn_log_prob(queries,
                                                              input_ids.permute(1, 0),
-                                                             pad_idx=-100) 
+                                                             pad_idx=-100)
 
             yhat_knn_prob = yhat_knn_prob.permute(1, 0, 2).squeeze(-1) # not sure if this shape still holds
-            if self.args.fp16:
+            if self.knnlm_args.fp16:
                 yhat_knn_prob = yhat_knn_prob.half()
                 lm_logits = lm_logits.half()
 
-            lm_logits = self.combine_knn_and_vocab_probs(yhat_knn_prob, lm_logits, self.args.lmbda)
+            lm_logits = self.combine_knn_and_vocab_probs(yhat_knn_prob, lm_logits, self.knnlm_args.lmbda)
 
         loss = None
         if labels is not None:
