@@ -248,7 +248,6 @@ def main():
     #
     # In distributed training, the load_dataset function guarantee that only one local process can concurrently
     # download the dataset.
-    print('***************got here 1*****************')
     if data_args.dataset_name is not None:
         # Downloading and loading a dataset from the hub.
         raw_datasets = load_dataset(
@@ -325,8 +324,6 @@ def main():
             logger.info(f"Overriding config: {model_args.config_overrides}")
             config.update_from_string(model_args.config_overrides)
 
-    print('************************got here 2***************************')
-
     tokenizer_kwargs = {
         "cache_dir": model_args.cache_dir,
         "use_fast": model_args.use_fast_tokenizer,
@@ -345,8 +342,6 @@ def main():
 
     # change model from auto to knnlmgpt2
     if model_args.model_name_or_path:
-        print('************* in here: model_args: ', model_args)
-
         model = knnlmGPT2LMHeadModel.from_pretrained(
             model_args.model_name_or_path,
             from_tf=bool(".ckpt" in model_args.model_name_or_path),
@@ -359,8 +354,6 @@ def main():
         model = knnlmGPT2LMHeadModel.from_config(config)
         n_params = sum(dict((p.data_ptr(), p.numel()) for p in model.parameters()).values())
         logger.info(f"Training new model from scratch - Total size={n_params/2**20:.2f}M params")
-
-    print('****************************got here 3********************************')
 
     model.resize_token_embeddings(len(tokenizer))
 
@@ -413,7 +406,8 @@ def main():
 
     # for better results: adding sliding window strategy
     # https://huggingface.co/transformers/v3.2.0/perplexity.html
-    stride = 512
+    stride = 1024
+    model.knnlm_args.context_window = stride
 
     # Main data processing function that will concatenate all texts from our dataset and generate chunks of block_size.
     def group_texts(examples):
@@ -431,12 +425,16 @@ def main():
         }
         result["labels"] = result["input_ids"].copy()
 
-        # sliding window strategy
-        for label in result["labels"]:
-            label[:-stride] = [-100] * (stride + 1)
-        model.start_idxs = [max(i + stride - block_size, 0) for i in range(0, total_length, stride)] # all beginning locations
+        # sliding window strategy -- DOESN'T WORK
+        # gets CUDA error: CUBLAS_STATUS_ALLOC_FAILED... might be due to incorrect label size?
+        #for label in result["labels"]:
+        #    label[:-stride] = [-100] * (stride + 1)
+        #model.start_idxs = [max(i + stride - block_size, 0) for i in range(0, total_length, stride)] # all beginning locations
+        model.start_idxs = [0 for _ in range(0, total_length, stride)]
 
         return result
+
+    model.resize_token_embeddings(len(tokenizer))
 
     # Note that with `batched=True`, this map processes 1,000 texts together, so group_texts throws away a remainder
     # for each of those groups of 1,000 texts. You can adjust that batch_size here but a higher value might be slower

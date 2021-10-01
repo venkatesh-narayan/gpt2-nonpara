@@ -1835,7 +1835,7 @@ class Trainer:
         return loss.detach()
 
 
-    def compute_loss(self, model, inputs, return_outputs=False):
+    def compute_loss(self, model, inputs, passed_labels=None, return_outputs=False):
         """
         How the loss is computed by Trainer. By default, all models return the loss in the first element.
 
@@ -1844,11 +1844,11 @@ class Trainer:
         if self.label_smoother is not None and "labels" in inputs:
             labels = inputs.pop("labels")
         else:
-            labels = None
+            labels = passed_labels
         outputs = model(**inputs)
 
         # for knnlm -- writing to datastore
-        if hasattr(model, args):
+        if hasattr(model, 'knnlm_args'):
             if model.knnlm_args.save_knnlm_dstore:
                 assert model.start_idxs is not None # sanity check
                 dkeys = outputs.knn_emb[model.start_idxs[self.curr_location]:, self.curr_location, :]
@@ -1886,7 +1886,7 @@ class Trainer:
         if self.args.past_index >= 0:
             self._past = outputs[self.args.past_index]
 
-        if labels is not None:
+        if self.label_smoother is not None and labels is not None:
             loss = self.label_smoother(outputs, labels)
         else:
             # We don't use .loss here since the model may return tuples instead of ModelOutput.
@@ -2280,7 +2280,7 @@ class Trainer:
         # Will be useful when we have an iterable dataset so don't know its length.
 
         # for knnlm -- initializing datastore
-        if hasattr(model, args):
+        if hasattr(model, 'knnlm_args'):
             self.dstore_idx = 0
             if model.knnlm_args.knnlm and model.knnlm_args.save_knnlm_dstore:
                 raise ValueError("Cannot use knnlm while trying to build the datastore!")
@@ -2524,7 +2524,7 @@ class Trainer:
             else:
                 # assuming has_labels is true; need targets for knnlm, and usually, targets is under labels
                 if has_labels:
-                    loss, outputs = self.compute_loss(model, inputs, return_outputs=True) # adapted for saving dstore
+                    loss, outputs = self.compute_loss(model, inputs, passed_labels=labels, return_outputs=True) # adapted for saving dstore
                     loss = loss.mean().detach()
                     if isinstance(outputs, dict):
                         logits = tuple(v for k, v in outputs.items() if k not in ignore_keys + ["loss"])

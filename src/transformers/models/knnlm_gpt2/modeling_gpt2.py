@@ -758,10 +758,6 @@ class GPT2Model(GPT2PreTrainedModel):
             if output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
 
-            if i == len(self.h) - 1:
-                self.knn_emb = block.knn_emb
-                assert self.knn_emb is not None # just a sanity check
-
             if getattr(self.config, "gradient_checkpointing", False) and self.training:
 
                 if use_cache:
@@ -801,6 +797,11 @@ class GPT2Model(GPT2PreTrainedModel):
 
 
             hidden_states = outputs[0]
+
+            if i == len(self.h) - 1:
+                self.knn_emb = block.knn_emb
+                assert self.knn_emb is not None # just a sanity check
+
             if use_cache is True:
                 presents = presents + (outputs[1],)
 
@@ -972,14 +973,19 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
         knnlm_args.dstore_mmap           = getattr(knnlm_args, 'dstore_mmap', 'checkpoints/dstore') # default save location
         knnlm_args.dstore_size           = getattr(knnlm_args, 'dstore_size', 103225485) # default from knnlm
 
+        knnlm_args.knn_keytype           = getattr(knnlm_args, 'knn_keytype', 'last_ffn_input')
+        knnlm_args.dstore_fp16           = getattr(knnlm_args, 'dstore_fp16', True)
+        knnlm_args.lmbda                 = getattr(knnlm_args, 'lmbda', 0.0) # might need to change this
+        knnlm_args.tokens_per_sample     = getattr(knnlm_args, 'tokens_per_sample', 1024) # tokens per sample was 1536 in default knnlm but i think it should be 1024 here
+
         return knnlm_args
 
     # add args that aren't in knnlm/fairseq/models/transformer_lm.py
     def add_other_needed_args(self, knnlm_args):
-        if not knnlm_args.dstore_filename:
+        if not hasattr(knnlm_args, 'dstore_filename'):
             knnlm_args.dstore_filename = getattr(knnlm_args, 'dstore_filename', knnlm_args.dstore_mmap)
 
-        if not knnlm_args.faiss_index:
+        if not hasattr(knnlm_args, 'faiss_index'):
             knnlm_args.faiss_index = getattr(knnlm_args, 'faiss_index', knnlm_args.dstore_mmap + 'knn.index')
             knnlm_args.indexfile = getattr(knnlm_args, 'indexfile', knnlm_args.faiss_index)
 
@@ -1138,6 +1144,7 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
             hidden_states=transformer_outputs.hidden_states,
             attentions=transformer_outputs.attentions,
             cross_attentions=transformer_outputs.cross_attentions,
+            knn_emb=knn_emb
         )
 
     @staticmethod
