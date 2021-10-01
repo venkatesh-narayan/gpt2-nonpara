@@ -36,6 +36,7 @@ from transformers import (
     MODEL_FOR_CAUSAL_LM_MAPPING,
     AutoConfig,
     knnlmGPT2LMHeadModel, # switched automodel to knnlmgpt2
+    GPT2LMHeadModel,
     AutoTokenizer,
     HfArgumentParser,
     Trainer,
@@ -342,7 +343,7 @@ def main():
 
     # change model from auto to knnlmgpt2
     if model_args.model_name_or_path:
-        model = knnlmGPT2LMHeadModel.from_pretrained(
+        model = GPT2LMHeadModel.from_pretrained(
             model_args.model_name_or_path,
             from_tf=bool(".ckpt" in model_args.model_name_or_path),
             config=config,
@@ -351,7 +352,7 @@ def main():
             use_auth_token=True if model_args.use_auth_token else None,
         )
     else:
-        model = knnlmGPT2LMHeadModel.from_config(config)
+        model = GPT2LMHeadModel.from_config(config)
         n_params = sum(dict((p.data_ptr(), p.numel()) for p in model.parameters()).values())
         logger.info(f"Training new model from scratch - Total size={n_params/2**20:.2f}M params")
 
@@ -407,7 +408,7 @@ def main():
     # for better results: adding sliding window strategy
     # https://huggingface.co/transformers/v3.2.0/perplexity.html
     stride = 1024
-    model.knnlm_args.context_window = stride
+    if hasattr(model, 'knnlm_args'): model.knnlm_args.context_window = stride
 
     # Main data processing function that will concatenate all texts from our dataset and generate chunks of block_size.
     def group_texts(examples):
@@ -425,12 +426,11 @@ def main():
         }
         result["labels"] = result["input_ids"].copy()
 
-        # sliding window strategy -- DOESN'T WORK
-        # gets CUDA error: CUBLAS_STATUS_ALLOC_FAILED... might be due to incorrect label size?
-        #for label in result["labels"]:
-        #    label[:-stride] = [-100] * (stride + 1)
-        #model.start_idxs = [max(i + stride - block_size, 0) for i in range(0, total_length, stride)] # all beginning locations
-        model.start_idxs = [0 for _ in range(0, total_length, stride)]
+        # sliding window strategy
+        for label in result["labels"]:
+            label[:-stride] = [-100] * (len(label[:-stride]))
+        model.start_idxs = [max(i + stride - block_size, 0) for i in range(0, total_length, stride)] # all beginning locations
+        #model.start_idxs = [0 for _ in range(0, total_length, stride)]
 
         return result
 

@@ -1869,7 +1869,7 @@ class Trainer:
                     if model.knnlm_args.dstore_fp16:
                         self.dstore_keys[self.dstore_idx:shape[0]+self.dstore_idx] = dkeys.view(
                             -1, model.knnlm_args.decoder_embed_dim).cpu().numpy().astype(np.float16)
-                        self.dstore_vals[self.dstore_idx:shape[0]+self.dstore_idx] = labels.view(
+                        self.dstore_vals[self.dstore_idx:shape[0]+self.dstore_idx] = stripped_labels.view(
                             -1, 1).cpu().numpy().astype(np.int)
                     else:
                         # assume pad = -100
