@@ -407,8 +407,9 @@ def main():
 
     # for better results: adding sliding window strategy
     # https://huggingface.co/transformers/v3.2.0/perplexity.html
-    stride = 1024
+    stride = 512
     if hasattr(model, 'knnlm_args'): model.knnlm_args.context_window = stride
+    setattr(model, 'stride', stride)
 
     # Main data processing function that will concatenate all texts from our dataset and generate chunks of block_size.
     def group_texts(examples):
@@ -421,16 +422,16 @@ def main():
             total_length = (total_length // block_size) * block_size
         # Split by chunks of stride.
         result = {
-            k: [t[max(i + stride - block_size, 0) : i + stride] for i in range(0, total_length, stride)]
+            k: [t[max(i + stride - block_size, 0) : i + stride] for i in range(stride, total_length, stride)]
             for k, t in concatenated_examples.items()
         }
+
         result["labels"] = result["input_ids"].copy()
 
         # sliding window strategy
         for label in result["labels"]:
             label[:-stride] = [-100] * (len(label[:-stride]))
-        model.start_idxs = [max(i + stride - block_size, 0) for i in range(0, total_length, stride)] # all beginning locations
-        #model.start_idxs = [0 for _ in range(0, total_length, stride)]
+        model.start_idxs = [max(i + stride - block_size, 0) for i in range(stride, total_length, stride)] # all beginning locations
 
         return result
 
@@ -449,7 +450,7 @@ def main():
             batched=True,
             num_proc=data_args.preprocessing_num_workers,
             load_from_cache_file=not data_args.overwrite_cache,
-            desc=f"Grouping texts in chunks of {block_size}",
+            desc=f"Grouping texts in sliding windows of size {stride}",
         )
 
     if training_args.do_train:
@@ -464,7 +465,7 @@ def main():
             raise ValueError("--do_eval requires a validation dataset")
         eval_dataset = lm_datasets["validation"]
         if data_args.max_eval_samples is not None:
-            eval_dataset = eval_dataset.select(range(data_args.max_eval_samples))
+            eval_dataset = eval_dataset.select(range(stride)) #range(data_args.max_eval_samples))
 
     # Initialize our Trainer
     trainer = Trainer(

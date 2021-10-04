@@ -1844,7 +1844,7 @@ class Trainer:
         if self.label_smoother is not None and "labels" in inputs:
             labels = inputs.pop("labels")
         else:
-            labels = passed_labels
+            labels = passed_labels # used to be none -- added passed labels to ensure that we get some labels for knnlm
         outputs = model(**inputs)
 
         # for knnlm -- writing to datastore
@@ -1857,10 +1857,8 @@ class Trainer:
                 assert labels is not None # also a sanity check; need targets
 
                 stripped_labels = labels[self.curr_location, model.start_idxs[self.curr_location]:]
+                stripped_labels = stripped_labels[stripped_labels.ne(-100)]
 
-                # this shape is not necessarily correct; they do something with "start_indices" -- not sure what this is
-                # it seems it's usually just 0's, but might not be; dkeys might have to be changed
-                # need to check shapes of everything
                 shape = dkeys.shape
                 if shape[0] == model.knnlm_args.tokens_per_sample:
                     if self.dstore_idx + shape[0] > model.knnlm_args.dstore_size:
@@ -1893,6 +1891,10 @@ class Trainer:
         else:
             # We don't use .loss here since the model may return tuples instead of ModelOutput.
             loss = outputs["loss"] if isinstance(outputs, dict) else outputs[0]
+
+        # from https://huggingface.co/transformers/v3.2.0/perplexity.html
+        if hasattr(model, 'stride'):
+            loss = loss * stride
 
         return (loss, outputs) if return_outputs else loss
 
