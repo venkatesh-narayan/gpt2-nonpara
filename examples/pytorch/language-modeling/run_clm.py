@@ -405,12 +405,6 @@ def main():
             )
         block_size = min(data_args.block_size, tokenizer.model_max_length)
 
-    # for better results: adding sliding window strategy
-    # https://huggingface.co/transformers/v3.2.0/perplexity.html
-    stride = 512
-    if hasattr(model, 'knnlm_args'): model.knnlm_args.context_window = stride
-    setattr(model, 'stride', stride)
-
     # Main data processing function that will concatenate all texts from our dataset and generate chunks of block_size.
     def group_texts(examples):
         # Concatenate all texts.
@@ -420,19 +414,12 @@ def main():
         # customize this part to your needs.
         if total_length >= block_size:
             total_length = (total_length // block_size) * block_size
-        # Split by chunks of stride.
+        # Split by chunks of max_len.
         result = {
-            k: [t[max(i + stride - block_size, 0) : i + stride] for i in range(stride, total_length, stride)]
+            k: [t[i : i + block_size] for i in range(0, total_length, block_size)]
             for k, t in concatenated_examples.items()
         }
-
         result["labels"] = result["input_ids"].copy()
-
-        # sliding window strategy
-        for label in result["labels"]:
-            label[:-stride] = [-100] * (len(label[:-stride]))
-        model.start_idxs = [max(i + stride - block_size, 0) for i in range(stride, total_length, stride)] # all beginning locations
-
         return result
 
     model.resize_token_embeddings(len(tokenizer))
@@ -450,7 +437,7 @@ def main():
             batched=True,
             num_proc=data_args.preprocessing_num_workers,
             load_from_cache_file=not data_args.overwrite_cache,
-            desc=f"Grouping texts in sliding windows of size {stride}",
+            desc=f"Grouping texts in chunks of {block_size}",
         )
 
     if training_args.do_train:

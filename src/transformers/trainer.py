@@ -27,6 +27,7 @@ import sys
 import time
 import warnings
 import argparse
+import copy
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
 
@@ -1892,10 +1893,6 @@ class Trainer:
             # We don't use .loss here since the model may return tuples instead of ModelOutput.
             loss = outputs["loss"] if isinstance(outputs, dict) else outputs[0]
 
-        # from https://huggingface.co/transformers/v3.2.0/perplexity.html
-        if hasattr(model, 'stride'):
-            loss = loss * stride
-
         return (loss, outputs) if return_outputs else loss
 
 
@@ -2309,6 +2306,7 @@ class Trainer:
                                                     shape=(model.knnlm_args.dstore_size, 1))
 
         observed_num_examples = 0
+        self.stride = 512
         # Main evaluation loop
         for step, inputs in enumerate(dataloader):
             # Update the observed num examples
@@ -2321,8 +2319,40 @@ class Trainer:
 
             self.curr_location = step # for knnlm -- indexing into start_idxs
 
-            # Prediction step
-            loss, logits, labels = self.prediction_step(model, inputs, prediction_loss_only, ignore_keys=ignore_keys)
+            # for better results: https://huggingface.co/transformers/v3.2.0/perplexity.html
+            # sliding window implementation
+            loss, logits, labels = [], [], []
+            max_length = model.config.n_positions
+            if hasattr(model, "knnlm_args"):
+                model.knnlm_args.context_window = self.stride
+                model.start_idxs = [max(i + self.stride - max_length, 0) for i in range(0, inputs["input_ids"].size(1), self.stride)]
+
+            #import pdb; pdb.set_trace()
+            for i in range(0, inputs["input_ids"].size(1), self.stride):
+                begin_loc = max(i + self.stride - max_length, 0)
+                end_loc = i + self.stride
+                curr_inputs = {}
+                curr_inputs["input_ids"] = inputs["input_ids"][:, begin_loc:end_loc]
+                if hasattr(inputs, "labels"):
+                    curr_inputs["labels"] = copy.deepcopy(inputs["labels"][:, begin_loc:end_loc])
+                else:
+                    curr_inputs["labels"] = copy.deepcopy(inputs["input_ids"][:, begin_loc:end_loc])
+
+                curr_inputs["labels"][:, :-self.stride] = -100 # assume pad is always -100
+                curr_inputs["attention_mask"] = inputs["attention_mask"][:, begin_loc:end_loc]
+                # Prediction step
+                curr_loss, curr_logits, curr_labels = self.prediction_step(model, curr_inputs, prediction_loss_only, ignore_keys=ignore_keys)
+
+                if curr_loss is not None:
+                    loss.append(curr_loss) # loss typically shouldn't be none but just in case
+                if curr_logits is not None:
+                    logits.append(curr_logits)
+                if curr_labels is not None:
+                    labels.append(curr_labels)
+
+            loss   = None if len(loss) == 0 else torch.stack(loss)
+            logits = None if len(logits) == 0 else torch.stack(logits)
+            labels = None if len(labels) == 0 else torch.stack(labels)
 
             # Update containers on host
             if loss is not None:
