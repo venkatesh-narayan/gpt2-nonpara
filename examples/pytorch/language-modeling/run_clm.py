@@ -159,6 +159,14 @@ class DataTrainingArguments:
             "Default to the model max input length for single sentence inputs (take into account special tokens)."
         },
     )
+
+    stride: Optional[int] = field(
+        default=0,
+        metadata={
+            "help": "stride of the sliding window context"
+        },
+    )
+
     overwrite_cache: bool = field(
         default=False, metadata={"help": "Overwrite the cached training and evaluation sets"}
     )
@@ -369,9 +377,17 @@ def main():
     # since this will be pickled to avoid _LazyModule error in Hasher force logger loading before tokenize_function
     tok_logger = transformers.utils.logging.get_logger("transformers.tokenization_utils_base")
 
+    stride = data_args.stride # for sliding window context
+    max_length = model.config.n_positions # default max len
+    setattr(model, 'stride', stride)
+
+    #tokenizer.add_special_tokens({'pad_token': "[PAD]"})
+    #model.resize_token_embeddings(len(tokenizer))
+
     def tokenize_function(examples):
         with CaptureLogger(tok_logger) as cl:
             output = tokenizer(examples[text_column_name])
+
         # clm input could be much much longer than block_size
         if "Token indices sequence length is longer than the" in cl.out:
             tok_logger.warning(
@@ -408,7 +424,7 @@ def main():
     # Main data processing function that will concatenate all texts from our dataset and generate chunks of block_size.
     def group_texts(examples):
         # Concatenate all texts.
-        concatenated_examples = {k: sum(examples[k], []) for k in examples.keys()}
+        '''concatenated_examples = {k: sum(examples[k], []) for k in examples.keys()}
         total_length = len(concatenated_examples[list(examples.keys())[0]])
         # We drop the small remainder, we could add padding if the model supported it instead of this drop, you can
         # customize this part to your needs.
@@ -418,11 +434,29 @@ def main():
         result = {
             k: [t[i : i + block_size] for i in range(0, total_length, block_size)]
             for k, t in concatenated_examples.items()
-        }
-        result["labels"] = result["input_ids"].copy()
+        }'''
+
+        concatenated_examples = {k: [] for k in examples.keys()}
+        for k in examples.keys():
+            for ex in examples[k]:
+                concatenated_examples[k].extend(ex)
+
+        total_length = len(concatenated_examples["input_ids"])
+        # We drop the small remainder, we could add padding if the model supported it instead of this drop, you can
+        # customize this part to your needs.
+        if total_length >= stride:
+            total_length = (total_length // stride) * stride
+
+        result = {k: [] for k in examples.keys()}
+        for i in range(max_length - stride, total_length, stride):
+            begin_loc = max(i + stride - max_length, 0)
+            end_loc = min(i + stride, total_length)
+            for k in result.keys():
+                result[k].append(concatenated_examples[k][begin_loc:end_loc])
+
+        result["labels"] = result["input_ids"].copy() # context set to -100 within trainer
         return result
 
-    model.resize_token_embeddings(len(tokenizer))
 
     # Note that with `batched=True`, this map processes 1,000 texts together, so group_texts throws away a remainder
     # for each of those groups of 1,000 texts. You can adjust that batch_size here but a higher value might be slower
@@ -447,12 +481,13 @@ def main():
         if data_args.max_train_samples is not None:
             train_dataset = train_dataset.select(range(data_args.max_train_samples))
 
+    #import pdb; pdb.set_trace()
     if training_args.do_eval:
         if "validation" not in tokenized_datasets:
             raise ValueError("--do_eval requires a validation dataset")
         eval_dataset = lm_datasets["validation"]
         if data_args.max_eval_samples is not None:
-            eval_dataset = eval_dataset.select(range(stride)) #range(data_args.max_eval_samples))
+            eval_dataset = eval_dataset.select(range(data_args.max_eval_samples))
 
     # Initialize our Trainer
     trainer = Trainer(

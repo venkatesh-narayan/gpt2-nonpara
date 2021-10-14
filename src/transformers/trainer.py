@@ -1852,6 +1852,7 @@ class Trainer:
         if hasattr(model, 'knnlm_args'):
             if model.knnlm_args.save_knnlm_dstore:
                 assert model.start_idxs is not None # sanity check
+                import pdb; pdb.set_trace()
                 dkeys = outputs.knn_emb[self.curr_location, model.start_idxs[self.curr_location]:, :]
 
                 assert dkeys is not None # just a sanity check
@@ -1892,6 +1893,8 @@ class Trainer:
         else:
             # We don't use .loss here since the model may return tuples instead of ModelOutput.
             loss = outputs["loss"] if isinstance(outputs, dict) else outputs[0]
+
+        loss = loss * model.stride / self.end_loc # for sliding window context
 
         return (loss, outputs) if return_outputs else loss
 
@@ -2305,8 +2308,11 @@ class Trainer:
                                                     dtype=np.int, mode='w+',
                                                     shape=(model.knnlm_args.dstore_size, 1))
 
+            model.knnlm_args.context_window = model.stride
+            model.knnlm_args.tokens_per_sample = model.stride
+            model.start_idxs = [max(i + model.stride - model.config.n_positions, 0) for i in range(model.config.n_positions - model.stride, inputs["input_ids"].size(1), model.stride)]
+
         observed_num_examples = 0
-        self.stride = 512
         # Main evaluation loop
         for step, inputs in enumerate(dataloader):
             # Update the observed num examples
@@ -2318,41 +2324,10 @@ class Trainer:
                     batch_size = observed_batch_size
 
             self.curr_location = step # for knnlm -- indexing into start_idxs
+            self.end_loc = [min(i + model.stride, inputs["input_ids"].size(1)) for i in range(model.config.n_positions - model.stride, inputs["input_ids"].size(1), model.stride)][-1]
 
-            # for better results: https://huggingface.co/transformers/v3.2.0/perplexity.html
-            # sliding window implementation
-            loss, logits, labels = [], [], []
-            max_length = model.config.n_positions
-            if hasattr(model, "knnlm_args"):
-                model.knnlm_args.context_window = self.stride
-                model.start_idxs = [max(i + self.stride - max_length, 0) for i in range(0, inputs["input_ids"].size(1), self.stride)]
-
-            #import pdb; pdb.set_trace()
-            for i in range(0, inputs["input_ids"].size(1), self.stride):
-                begin_loc = max(i + self.stride - max_length, 0)
-                end_loc = i + self.stride
-                curr_inputs = {}
-                curr_inputs["input_ids"] = inputs["input_ids"][:, begin_loc:end_loc]
-                if hasattr(inputs, "labels"):
-                    curr_inputs["labels"] = copy.deepcopy(inputs["labels"][:, begin_loc:end_loc])
-                else:
-                    curr_inputs["labels"] = copy.deepcopy(inputs["input_ids"][:, begin_loc:end_loc])
-
-                curr_inputs["labels"][:, :-self.stride] = -100 # assume pad is always -100
-                curr_inputs["attention_mask"] = inputs["attention_mask"][:, begin_loc:end_loc]
-                # Prediction step
-                curr_loss, curr_logits, curr_labels = self.prediction_step(model, curr_inputs, prediction_loss_only, ignore_keys=ignore_keys)
-
-                if curr_loss is not None:
-                    loss.append(curr_loss) # loss typically shouldn't be none but just in case
-                if curr_logits is not None:
-                    logits.append(curr_logits)
-                if curr_labels is not None:
-                    labels.append(curr_labels)
-
-            loss   = None if len(loss) == 0 else torch.stack(loss)
-            logits = None if len(logits) == 0 else torch.stack(logits)
-            labels = None if len(labels) == 0 else torch.stack(labels)
+            # Prediction step
+            loss, logits, labels = self.prediction_step(model, inputs, prediction_loss_only, ignore_keys=ignore_keys)
 
             # Update containers on host
             if loss is not None:
@@ -2558,7 +2533,9 @@ class Trainer:
             else:
                 # assuming has_labels is true; need targets for knnlm, and usually, targets is under labels
                 if has_labels:
-                    loss, outputs = self.compute_loss(model, inputs, passed_labels=labels, return_outputs=True) # adapted for saving dstore
+                    passed_labels = labels.clone()
+                    passed_labels[1:, :-model.stride] = -100 # for the first batch, first stride labels shouldn't be ignored (not context)
+                    loss, outputs = self.compute_loss(model, inputs, passed_labels=passed_labels, return_outputs=True) # adapted for saving dstore
                     loss = loss.mean().detach()
                     if isinstance(outputs, dict):
                         logits = tuple(v for k, v in outputs.items() if k not in ignore_keys + ["loss"])
