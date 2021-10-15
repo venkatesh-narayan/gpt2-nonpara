@@ -1852,35 +1852,36 @@ class Trainer:
         if hasattr(model, 'knnlm_args'):
             if model.knnlm_args.save_knnlm_dstore:
                 assert model.start_idxs is not None # sanity check
-                import pdb; pdb.set_trace()
-                dkeys = outputs.knn_emb[self.curr_location, model.start_idxs[self.curr_location]:, :]
 
-                assert dkeys is not None # just a sanity check
-                assert labels is not None # also a sanity check; need targets
+                for i in range(len(model.start_idxs)):
+                    dkeys = outputs.knn_emb[i, model.start_idxs[i]:, :]
 
-                stripped_labels = labels[self.curr_location, model.start_idxs[self.curr_location]:]
-                stripped_labels = stripped_labels[stripped_labels.ne(-100)]
+                    assert dkeys is not None # just a sanity check
+                    assert labels is not None # also a sanity check; need targets
 
-                shape = dkeys.shape
-                if shape[0] == model.knnlm_args.tokens_per_sample:
-                    if self.dstore_idx + shape[0] > model.knnlm_args.dstore_size:
-                        shape = [model.knnlm_args.dstore_size - self.dstore_idx]
-                        dkeys = dkeys[:shape[0]]
-                    if model.knnlm_args.dstore_fp16:
-                        self.dstore_keys[self.dstore_idx:shape[0]+self.dstore_idx] = dkeys.view(
-                            -1, model.knnlm_args.decoder_embed_dim).cpu().numpy().astype(np.float16)
-                        self.dstore_vals[self.dstore_idx:shape[0]+self.dstore_idx] = stripped_labels.view(
-                            -1, 1).cpu().numpy().astype(np.int)
+                    stripped_labels = labels[i, model.start_idxs[i]:]
+                    stripped_labels = stripped_labels[stripped_labels.ne(-100)]
+
+                    shape = dkeys.shape
+                    if shape[0] == model.knnlm_args.tokens_per_sample:
+                        if self.dstore_idx + shape[0] > model.knnlm_args.dstore_size:
+                            shape = [model.knnlm_args.dstore_size - self.dstore_idx]
+                            dkeys = dkeys[:shape[0]]
+                        if model.knnlm_args.dstore_fp16:
+                            self.dstore_keys[self.dstore_idx:shape[0]+self.dstore_idx] = dkeys.view(
+                                -1, model.knnlm_args.decoder_embed_dim).cpu().numpy().astype(np.float16)
+                            self.dstore_vals[self.dstore_idx:shape[0]+self.dstore_idx] = stripped_labels.view(
+                                -1, 1).cpu().numpy().astype(np.int)
+                        else:
+                            # assume pad = -100
+                            self.dstore_keys[self.dstore_idx:shape[0]+self.dstore_idx] = stripped_labels.view(
+                                -1, model.knnlm_args.decoder_embed_dim).cpu().numpy().astype(np.float32)
+                            self.dstore_vals[self.dstore_idx:shape[0]+self.dstore_idx] = stripped_labels.view(
+                                -1, 1).cpu().numpy().astype(np.int)
+
+                        self.dstore_idx += shape[0]
                     else:
-                        # assume pad = -100
-                        self.dstore_keys[self.dstore_idx:shape[0]+self.dstore_idx] = stripped_labels.view(
-                            -1, model.knnlm_args.decoder_embed_dim).cpu().numpy().astype(np.float32)
-                        self.dstore_vals[self.dstore_idx:shape[0]+self.dstore_idx] = stripped_labels.view(
-                            -1, 1).cpu().numpy().astype(np.int)
-
-                    self.dstore_idx += shape[0]
-                else:
-                    print('Skipping this one with shape', shape)
+                        print('Skipping this one with shape', shape)
 
 
         # Save past state if it exists
@@ -2310,7 +2311,6 @@ class Trainer:
 
             model.knnlm_args.context_window = model.stride
             model.knnlm_args.tokens_per_sample = model.stride
-            model.start_idxs = [max(i + model.stride - model.config.n_positions, 0) for i in range(model.config.n_positions - model.stride, inputs["input_ids"].size(1), model.stride)]
 
         observed_num_examples = 0
         # Main evaluation loop
@@ -2323,7 +2323,8 @@ class Trainer:
                 if batch_size is None:
                     batch_size = observed_batch_size
 
-            self.curr_location = step # for knnlm -- indexing into start_idxs
+            if hasattr(model, 'knnlm_args'):
+                model.start_idxs = [max(i + model.stride - model.config.n_positions, 0) for i in range(model.config.n_positions - model.stride, inputs["input_ids"].size(1), model.stride)]
             self.end_loc = [min(i + model.stride, inputs["input_ids"].size(1)) for i in range(model.config.n_positions - model.stride, inputs["input_ids"].size(1), model.stride)][-1]
 
             # Prediction step

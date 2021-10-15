@@ -967,7 +967,7 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
         knnlm_args.context_window        = getattr(knnlm_args, 'context_window', 512) # context window size was 1536 for default knnlm but my stride value from run_clm.py was 512
         knnlm_args.softmax_batch         = getattr(knnlm_args, 'softmax_batch', 1024)
         knnlm_args.lm_eval               = getattr(knnlm_args, 'lm_eval', self.training)
-        knnlm_args.knnlm                 = getattr(knnlm_args, 'knnlm', False) # initially, don't do knnlm -- save the dstore
+        knnlm_args.knnlm                 = getattr(knnlm_args, 'knnlm', True)
         knnlm_args.save_knnlm_dstore     = getattr(knnlm_args, 'save_knnlm_dstore', True) # initially, save the dstore
 
         knnlm_args.dstore_mmap           = getattr(knnlm_args, 'dstore_mmap', 'checkpoints/dstore') # default save location
@@ -986,7 +986,7 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
             knnlm_args.dstore_filename = getattr(knnlm_args, 'dstore_filename', knnlm_args.dstore_mmap)
 
         if not hasattr(knnlm_args, 'faiss_index'):
-            knnlm_args.faiss_index = getattr(knnlm_args, 'faiss_index', knnlm_args.dstore_mmap + 'knn.index')
+            knnlm_args.faiss_index = getattr(knnlm_args, 'faiss_index', 'checkpoints/knn.index') # default save location
             knnlm_args.indexfile = getattr(knnlm_args, 'indexfile', knnlm_args.faiss_index)
 
         return knnlm_args

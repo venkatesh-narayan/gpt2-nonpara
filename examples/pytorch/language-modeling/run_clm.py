@@ -112,6 +112,18 @@ class ModelArguments:
         },
     )
 
+    is_knnlm_model: bool = field(
+            default=False, metadata={"help": "tells whether or not the model is a knnlm_* model"}
+    )
+
+    knnlm: bool = field(
+        default=False, metadata={"help": "use knnlm to influence probabilities; note that this cannot be true while save_knnlm_dstore is true"}
+    )
+
+    save_knnlm_dstore: bool = field(
+        default=False, metadata={"help": "save knnlm dstore; note that this cannot be true while knnlm is true"}
+    )
+
     def __post_init__(self):
         if self.config_overrides is not None and (self.config_name is not None or self.model_name_or_path is not None):
             raise ValueError(
@@ -351,18 +363,40 @@ def main():
 
     # change model from auto to knnlmgpt2
     if model_args.model_name_or_path:
-        model = GPT2LMHeadModel.from_pretrained(
-            model_args.model_name_or_path,
-            from_tf=bool(".ckpt" in model_args.model_name_or_path),
-            config=config,
-            cache_dir=model_args.cache_dir,
-            revision=model_args.model_revision,
-            use_auth_token=True if model_args.use_auth_token else None,
-        )
+        if model_args.is_knnlm_model:
+            model = knnlmGPT2LMHeadModel.from_pretrained(
+                model_args.model_name_or_path,
+                from_tf=bool(".ckpt" in model_args.model_name_or_path),
+                config=config,
+                cache_dir=model_args.cache_dir,
+                revision=model_args.model_revision,
+                use_auth_token=True if model_args.use_auth_token else None,
+            )
+
+            model.knnlm_args.save_knnlm_dstore = model_args.save_knnlm_dstore
+            model.knnlm_args.knnlm = model_args.knnlm
+        else:
+            model = GPT2LMHeadModel.from_pretrained(
+                model_args.model_name_or_path,
+                from_tf=bool(".ckpt" in model_args.model_name_or_path),
+                config=config,
+                cache_dir=model_args.cache_dir,
+                revision=model_args.model_revision,
+                use_auth_token=True if model_args.use_auth_token else None,
+            )
+
     else:
-        model = GPT2LMHeadModel.from_config(config)
-        n_params = sum(dict((p.data_ptr(), p.numel()) for p in model.parameters()).values())
-        logger.info(f"Training new model from scratch - Total size={n_params/2**20:.2f}M params")
+        if model_args.is_knnlm_model:
+            model = knnlmGPT2LMHeadModel.from_config(config)
+            n_params = sum(dict((p.data_ptr(), p.numel()) for p in model.parameters()).values())
+            logger.info(f"Training new model from scratch - Total size={n_params/2**20:.2f}M params")
+
+            model.knnlm_args.save_knnlm_dstore = model_args.save_knnlm_dstore
+            model.knnlm_args.knnlm = model_args.knnlm
+        else:
+            model = GPT2LMHeadModel.from_config(config)
+            n_params = sum(dict((p.data_ptr(), p.numel()) for p in model.parameters()).values())
+            logger.info(f"Training new model from scratch - Total size={n_params/2**20:.2f}M params")
 
     model.resize_token_embeddings(len(tokenizer))
 
@@ -424,18 +458,6 @@ def main():
     # Main data processing function that will concatenate all texts from our dataset and generate chunks of block_size.
     def group_texts(examples):
         # Concatenate all texts.
-        '''concatenated_examples = {k: sum(examples[k], []) for k in examples.keys()}
-        total_length = len(concatenated_examples[list(examples.keys())[0]])
-        # We drop the small remainder, we could add padding if the model supported it instead of this drop, you can
-        # customize this part to your needs.
-        if total_length >= block_size:
-            total_length = (total_length // block_size) * block_size
-        # Split by chunks of max_len.
-        result = {
-            k: [t[i : i + block_size] for i in range(0, total_length, block_size)]
-            for k, t in concatenated_examples.items()
-        }'''
-
         concatenated_examples = {k: [] for k in examples.keys()}
         for k in examples.keys():
             for ex in examples[k]:
