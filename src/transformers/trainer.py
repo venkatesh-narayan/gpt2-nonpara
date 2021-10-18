@@ -1895,7 +1895,7 @@ class Trainer:
             # We don't use .loss here since the model may return tuples instead of ModelOutput.
             loss = outputs["loss"] if isinstance(outputs, dict) else outputs[0]
 
-        loss = loss * model.stride / self.end_loc # for sliding window context
+        # loss = loss * model.stride / self.end_loc # for sliding window context
 
         return (loss, outputs) if return_outputs else loss
 
@@ -2330,6 +2330,7 @@ class Trainer:
             # Prediction step
             loss, logits, labels = self.prediction_step(model, inputs, prediction_loss_only, ignore_keys=ignore_keys)
 
+            # import pdb; pdb.set_trace()
             # Update containers on host
             if loss is not None:
                 losses = self._nested_gather(loss.repeat(batch_size))
@@ -2537,6 +2538,8 @@ class Trainer:
                     passed_labels = labels.clone()
                     passed_labels[1:, :-model.stride] = -100 # for the first batch, first stride labels shouldn't be ignored (not context)
                     loss, outputs = self.compute_loss(model, inputs, passed_labels=passed_labels, return_outputs=True) # adapted for saving dstore
+
+                    # import pdb; pdb.set_trace()
                     loss = loss.mean().detach()
                     if isinstance(outputs, dict):
                         logits = tuple(v for k, v in outputs.items() if k not in ignore_keys + ["loss"])

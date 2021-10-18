@@ -470,13 +470,48 @@ def main():
             total_length = (total_length // stride) * stride
 
         result = {k: [] for k in examples.keys()}
-        for i in range(max_length - stride, total_length, stride):
+        result['labels'] = []
+        # import pdb; pdb.set_trace()
+        for i in range(0, total_length, stride):
             begin_loc = max(i + stride - max_length, 0)
             end_loc = min(i + stride, total_length)
-            for k in result.keys():
-                result[k].append(concatenated_examples[k][begin_loc:end_loc])
+            for k in concatenated_examples.keys():
 
-        result["labels"] = result["input_ids"].copy() # context set to -100 within trainer
+                # this happens in the begining strides within the first max_length tokens
+                if end_loc - begin_loc < max_length and begin_loc == 0:
+                    # padding
+                    to_append = [0] * max_length
+                    to_append[begin_loc:end_loc] = concatenated_examples[k][begin_loc:end_loc]
+
+                else:
+                    to_append = concatenated_examples[k][begin_loc:end_loc]
+
+                result[k].append(to_append)
+
+            # import pdb; pdb.set_trace()
+            labels = concatenated_examples["input_ids"][begin_loc:end_loc].copy()
+            trg_len = end_loc - i
+
+            # do not compute loss for context
+            labels[:-trg_len] = [-100] * len(labels[:-trg_len])
+            # this happens in the begining strides within the first max_length tokens
+            if end_loc - begin_loc < max_length and begin_loc == 0:
+                # padding
+                to_append = [-100] * max_length
+                to_append[begin_loc:end_loc] = labels
+
+            else:
+                to_append = labels
+
+            result['labels'].append(to_append)
+
+        # Split by chunks of max_len.
+        # result = {
+        #     k: [t[i : i + block_size] for i in range(0, total_length, block_size)]
+        #     for k, t in concatenated_examples.items()
+        # }
+
+        # result["labels"] = result["input_ids"].copy() # context set to -100 within trainer
         return result
 
 
