@@ -1121,7 +1121,7 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
 
             # padding is usually -100 in huggingface transformers models
             yhat_knn_prob = self.knn_dstore.get_knn_log_prob(queries,
-                                                             padded_labels,
+                                                             labels,
                                                              pad_idx=-100)
 
             yhat_knn_prob = yhat_knn_prob.permute(1, 0, 2).squeeze(-1) # not sure if this shape still holds
