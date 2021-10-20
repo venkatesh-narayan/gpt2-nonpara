@@ -982,12 +982,15 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
 
     # add args that aren't in knnlm/fairseq/models/transformer_lm.py
     def add_other_needed_args(self, knnlm_args):
-        if not hasattr(knnlm_args, 'dstore_filename'):
-            knnlm_args.dstore_filename = getattr(knnlm_args, 'dstore_filename', knnlm_args.dstore_mmap)
-
-        if not hasattr(knnlm_args, 'faiss_index'):
-            knnlm_args.faiss_index = getattr(knnlm_args, 'faiss_index', 'checkpoints/knn.index') # default save location
-            knnlm_args.indexfile = getattr(knnlm_args, 'indexfile', knnlm_args.faiss_index)
+        knnlm_args.dstore_filename    = getattr(knnlm_args, 'dstore_filename', knnlm_args.dstore_mmap)
+        knnlm_args.faiss_index        = getattr(knnlm_args, 'faiss_index', 'checkpoints/knn.index') # default save location
+        knnlm_args.indexfile          = getattr(knnlm_args, 'indexfile', 'checkpoints/knn.index.trained')
+        knnlm_args.k                  = getattr(knnlm_args, 'k', 1024)
+        knnlm_args.faiss_metric_type  = getattr(knnlm_args, 'faiss_metric_type', 'l2')
+        knnlm_args.knn_sim_func       = getattr(knnlm_args, 'knn_sim_func', 'do_not_recomp_l2')
+        knnlm_args.probe              = getattr(knnlm_args, 'probe', 32)
+        knnlm_args.no_load_keys       = getattr(knnlm_args, 'no_load_keys', False)
+        knnlm_args.move_dstore_to_mem = getattr(knnlm_args, 'move_dstore_to_mem', False)
 
         return knnlm_args
 
@@ -1110,11 +1113,15 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
             # assume it's always last_ffn_input for now
             assert self.knnlm_args.knn_keytype == 'last_ffn_input'
             assert knn_emb is not None, "didn't get any knn embeddings!"
+            assert labels is not None # just a sanity check
+
             queries = knn_emb
+
+            import pdb; pdb.set_trace()
 
             # padding is usually -100 in huggingface transformers models
             yhat_knn_prob = self.knn_dstore.get_knn_log_prob(queries,
-                                                             input_ids.permute(1, 0),
+                                                             padded_labels,
                                                              pad_idx=-100)
 
             yhat_knn_prob = yhat_knn_prob.permute(1, 0, 2).squeeze(-1) # not sure if this shape still holds
