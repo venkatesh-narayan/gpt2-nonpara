@@ -52,7 +52,7 @@ from ...utils import logging
 from ...utils.model_parallel_utils import assert_device_map, get_device_map
 from .configuration_gpt2 import GPT2Config
 
-from fairseq.knnlm import KNN_Dstore
+from ...fairseq.knnlm import KNN_Dstore
 
 logger = logging.get_logger(__name__)
 
@@ -984,7 +984,7 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
     def add_other_needed_args(self, knnlm_args):
         knnlm_args.dstore_filename    = getattr(knnlm_args, 'dstore_filename', knnlm_args.dstore_mmap)
         knnlm_args.faiss_index        = getattr(knnlm_args, 'faiss_index', 'checkpoints/knn.index') # default save location
-        knnlm_args.indexfile          = getattr(knnlm_args, 'indexfile', 'checkpoints/knn.index.trained')
+        knnlm_args.indexfile          = getattr(knnlm_args, 'indexfile', 'checkpoints/knn.index')
         knnlm_args.k                  = getattr(knnlm_args, 'k', 1024)
         knnlm_args.faiss_metric_type  = getattr(knnlm_args, 'faiss_metric_type', 'l2')
         knnlm_args.knn_sim_func       = getattr(knnlm_args, 'knn_sim_func', 'do_not_recomp_l2')
@@ -1116,8 +1116,6 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
             assert labels is not None # just a sanity check
 
             queries = knn_emb
-
-            import pdb; pdb.set_trace()
 
             # padding is usually -100 in huggingface transformers models
             yhat_knn_prob = self.knn_dstore.get_knn_log_prob(queries,

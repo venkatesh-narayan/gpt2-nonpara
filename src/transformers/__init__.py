@@ -81,6 +81,8 @@ _import_structure = {
         "xnli_processors",
         "xnli_tasks_num_labels",
     ],
+    "fairseq": [],
+    "fairseq.knnlm": ["KNN_Dstore"],
     "feature_extraction_sequence_utils": ["BatchFeature", "SequenceFeatureExtractor"],
     "file_utils": [
         "CONFIG_NAME",
@@ -1789,6 +1791,9 @@ if TYPE_CHECKING:
         xnli_processors,
         xnli_tasks_num_labels,
     )
+
+    # fairseq
+    from .fairseq.knnlm import KNN_Dstore
 
     # Feature Extractor
     from .feature_extraction_utils import BatchFeature, SequenceFeatureExtractor
