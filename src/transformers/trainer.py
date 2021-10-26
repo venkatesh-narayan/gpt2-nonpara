@@ -1850,9 +1850,11 @@ class Trainer:
 
         # for knnlm -- writing to datastore
         if hasattr(model, 'knnlm_args'):
+            #print(f'save dstore: {model.knnlm_args.save_knnlm_dstore}')
             if model.knnlm_args.save_knnlm_dstore:
                 assert model.start_idxs is not None # sanity check
 
+                #import pdb; pdb.set_trace()
                 for i in range(len(model.start_idxs)):
                     dkeys = outputs.knn_emb[i, model.start_idxs[i]:, :]
 
@@ -1874,7 +1876,7 @@ class Trainer:
                                 -1, 1).cpu().numpy().astype(np.int)
                         else:
                             # assume pad = -100
-                            self.dstore_keys[self.dstore_idx:shape[0]+self.dstore_idx] = stripped_labels.view(
+                            self.dstore_keys[self.dstore_idx:shape[0]+self.dstore_idx] = dkeys.view(
                                 -1, model.knnlm_args.decoder_embed_dim).cpu().numpy().astype(np.float32)
                             self.dstore_vals[self.dstore_idx:shape[0]+self.dstore_idx] = stripped_labels.view(
                                 -1, 1).cpu().numpy().astype(np.int)
@@ -2284,6 +2286,7 @@ class Trainer:
         all_labels = None
         # Will be useful when we have an iterable dataset so don't know its length.
 
+
         # for knnlm -- initializing datastore
         if hasattr(model, 'knnlm_args'):
             self.dstore_idx = 0
@@ -2312,6 +2315,7 @@ class Trainer:
             model.knnlm_args.context_window = model.stride
             model.knnlm_args.tokens_per_sample = model.stride
 
+
         observed_num_examples = 0
         # Main evaluation loop
         for step, inputs in enumerate(dataloader):
@@ -2323,11 +2327,18 @@ class Trainer:
                 if batch_size is None:
                     batch_size = observed_batch_size
 
+            #import pdb; pdb.set_trace();
             if hasattr(model, 'knnlm_args'):
-                model.start_idxs = [max(i + model.stride - model.config.n_positions, 0) for i in range(model.config.n_positions - model.stride, inputs["input_ids"].size(1), model.stride)]
-            self.end_loc = [min(i + model.stride, inputs["input_ids"].size(1)) for i in range(model.config.n_positions - model.stride, inputs["input_ids"].size(1), model.stride)][-1]
+                model.start_idxs = [0] * batch_size
+                #for i in range(batch_size):
+                #    model.start_idxs.append(min(model.config.n_positions, i * (model.config.n_positions - model.stride)))
+
+                #model.start_idxs = [max(i + model.stride - model.config.n_positions, 0) for i in range(model.config.n_positions - model.stride, inputs["input_ids"].size(1), model.stride)]
+            #self.end_loc = [min(i + model.stride, inputs["input_ids"].size(1)) for i in range(model.config.n_positions - model.stride, inputs["input_ids"].size(1), model.stride)][-1]
 
             # Prediction step
+            #print(f'currently on step: {step}')
+            #print('about to enter prediction step')
             loss, logits, labels = self.prediction_step(model, inputs, prediction_loss_only, ignore_keys=ignore_keys)
 
             # import pdb; pdb.set_trace()
@@ -2536,8 +2547,7 @@ class Trainer:
                 # assuming has_labels is true; need targets for knnlm, and usually, targets is under labels
                 if has_labels:
                     passed_labels = labels.clone()
-                    passed_labels[1:, :-model.stride] = -100 # for the first batch, first stride labels shouldn't be ignored (not context)
-                    loss, outputs = self.compute_loss(model, inputs, passed_labels=passed_labels, return_outputs=True) # adapted for saving dstore
+                    loss, outputs = self.compute_loss(model, inputs, passed_labels=passed_labels, return_outputs=True) # adapted for knnlm saving dstore
 
                     # import pdb; pdb.set_trace()
                     loss = loss.mean().detach()

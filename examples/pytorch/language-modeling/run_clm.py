@@ -402,7 +402,7 @@ def main():
 
     # Preprocessing the datasets.
     # First we tokenize all the texts.
-    if training_args.do_train:
+    if training_args.do_train or model_args.save_knnlm_dstore:
         column_names = raw_datasets["train"].column_names
     else:
         column_names = raw_datasets["validation"].column_names
@@ -411,7 +411,7 @@ def main():
     # since this will be pickled to avoid _LazyModule error in Hasher force logger loading before tokenize_function
     tok_logger = transformers.utils.logging.get_logger("transformers.tokenization_utils_base")
 
-    stride = data_args.stride # for sliding window context
+    stride = min(tokenizer.model_max_length, data_args.stride) # for sliding window context
     max_length = model.config.n_positions # default max len
     setattr(model, 'stride', stride)
 
@@ -531,7 +531,7 @@ def main():
             desc=f"Grouping texts in chunks of {block_size}",
         )
 
-    if training_args.do_train:
+    if training_args.do_train or model_args.save_knnlm_dstore:
         if "train" not in tokenized_datasets:
             raise ValueError("--do_train requires a train dataset")
         train_dataset = lm_datasets["train"]
@@ -547,15 +547,27 @@ def main():
             eval_dataset = eval_dataset.select(range(data_args.max_eval_samples))
 
     # Initialize our Trainer
-    trainer = Trainer(
-        model=model,
-        args=training_args,
-        train_dataset=train_dataset if training_args.do_train else None,
-        eval_dataset=eval_dataset if training_args.do_eval else None,
-        tokenizer=tokenizer,
-        # Data collator will default to DataCollatorWithPadding, so we change it.
-        data_collator=default_data_collator,
-    )
+    if model_args.save_knnlm_dstore:
+        trainer = Trainer(
+            model=model,
+            args=training_args,
+            train_dataset=None,
+            eval_dataset=train_dataset,
+            tokenizer=tokenizer,
+            # Data collator will default to DataCollatorWithPadding, so we change it.
+            data_collator=default_data_collator,
+        )
+
+    else:
+        trainer = Trainer(
+            model=model,
+            args=training_args,
+            train_dataset=train_dataset if training_args.do_train else None,
+            eval_dataset=eval_dataset if training_args.do_eval else None,
+            tokenizer=tokenizer,
+            # Data collator will default to DataCollatorWithPadding, so we change it.
+            data_collator=default_data_collator,
+        )
 
     # Training
     if training_args.do_train:
@@ -577,6 +589,23 @@ def main():
         trainer.log_metrics("train", metrics)
         trainer.save_metrics("train", metrics)
         trainer.save_state()
+
+    if model_args.save_knnlm_dstore:
+        logger.info("*** Building Datastore ***")
+
+        # changed trainer.evaluate() for knnlm
+        metrics = trainer.evaluate()
+
+        max_eval_samples = data_args.max_eval_samples if data_args.max_eval_samples is not None else len(train_dataset)
+        metrics["eval_samples"] = min(max_eval_samples, len(train_dataset))
+        try:
+            perplexity = math.exp(metrics["eval_loss"])
+        except OverflowError:
+            perplexity = float("inf")
+        metrics["perplexity"] = perplexity
+
+        trainer.log_metrics("eval", metrics)
+        trainer.save_metrics("eval", metrics)
 
     # Evaluation
     if training_args.do_eval:

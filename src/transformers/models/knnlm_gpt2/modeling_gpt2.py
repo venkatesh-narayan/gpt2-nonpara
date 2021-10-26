@@ -17,6 +17,7 @@
 
 import os
 import sys
+import time
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
@@ -859,7 +860,7 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
 
         # initialize args for KNN_Dstore
         self.knnlm_args = self.get_knnlm_initial_args()
-        self.knnlm_args = self.add_other_needed_args(self.knnlm_args)
+        self.knnlm_args = self.add_other_needed_args(self.knnlm_args, config)
         self.knnlm_args = self.set_args_by_config(self.knnlm_args, config)
 
         # check if dstore & faiss index exists
@@ -971,7 +972,7 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
         knnlm_args.save_knnlm_dstore     = getattr(knnlm_args, 'save_knnlm_dstore', True) # initially, save the dstore
 
         knnlm_args.dstore_mmap           = getattr(knnlm_args, 'dstore_mmap', 'checkpoints/dstore') # default save location
-        knnlm_args.dstore_size           = getattr(knnlm_args, 'dstore_size', 103225485) # default from knnlm
+        knnlm_args.dstore_size           = getattr(knnlm_args, 'dstore_size', 119721489) # total length of training tokens
 
         knnlm_args.knn_keytype           = getattr(knnlm_args, 'knn_keytype', 'last_ffn_input')
         knnlm_args.dstore_fp16           = getattr(knnlm_args, 'dstore_fp16', True)
@@ -981,7 +982,7 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
         return knnlm_args
 
     # add args that aren't in knnlm/fairseq/models/transformer_lm.py
-    def add_other_needed_args(self, knnlm_args):
+    def add_other_needed_args(self, knnlm_args, config):
         knnlm_args.dstore_filename    = getattr(knnlm_args, 'dstore_filename', knnlm_args.dstore_mmap)
         knnlm_args.faiss_index        = getattr(knnlm_args, 'faiss_index', 'checkpoints/knn.index') # default save location
         knnlm_args.indexfile          = getattr(knnlm_args, 'indexfile', 'checkpoints/knn.index')
@@ -989,8 +990,8 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
         knnlm_args.faiss_metric_type  = getattr(knnlm_args, 'faiss_metric_type', 'l2')
         knnlm_args.knn_sim_func       = getattr(knnlm_args, 'knn_sim_func', 'do_not_recomp_l2')
         knnlm_args.probe              = getattr(knnlm_args, 'probe', 32)
-        knnlm_args.no_load_keys       = getattr(knnlm_args, 'no_load_keys', False)
-        knnlm_args.move_dstore_to_mem = getattr(knnlm_args, 'move_dstore_to_mem', False)
+        knnlm_args.no_load_keys       = getattr(knnlm_args, 'no_load_keys', True)
+        knnlm_args.move_dstore_to_mem = getattr(knnlm_args, 'move_dstore_to_mem', True)
 
         return knnlm_args
 
@@ -1037,14 +1038,20 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
         return knnlm_args
 
     # taken from knnlm/fairseq/sequence_scorer.py
-    def combine_knn_and_vocab_probs(self, knn_p, vocab_p, coeff):
-        combine_probs = torch.stack([vocab_p, knn_p], dim=0)
-        coeffs = torch.ones_like(combine_probs)
+    def combine_knn_and_vocab_probs(self, knn_indices, knn_p, vocab_p, coeff):
+        start = time.time()
+        import pdb; pdb.set_trace()
+        # same_part = vocab_p[knn_indices]
+        some_part = torch.gather(vocab_p, dim=2, index=knn_indices)
+        coeffs = torch.ones_like(same_part)
         coeffs[0] = np.log(1 - coeff)
         coeffs[1] = np.log(coeff)
-        curr_prob = torch.logsumexp(combine_probs + coeffs, dim=0)
+        curr_prob = torch.logsumexp(same_part + coeffs, dim=0)
+        vocab_p[knn_indices] = curr_prob
 
-        return curr_prob
+        print(f'combined probs in {time.time() - start} seconds')
+
+        return vocab_p
 
     @add_start_docstrings_to_model_forward(GPT2_INPUTS_DOCSTRING)
     @add_code_sample_docstrings(
@@ -1117,17 +1124,20 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
 
             queries = knn_emb
 
+            print('going to start get_knn_log_prob')
+            s = time.time()
             # padding is usually -100 in huggingface transformers models
-            yhat_knn_prob = self.knn_dstore.get_knn_log_prob(queries,
-                                                             labels,
-                                                             pad_idx=-100)
+            knn_indices, knn_probs = self.knn_dstore.get_knn_log_prob(queries,
+                                                                      labels,
+                                                                      pad_idx=-100)
 
-            yhat_knn_prob = yhat_knn_prob.permute(1, 0, 2).squeeze(-1) # not sure if this shape still holds
+            print(f'took {time.time() - s} seconds')
+
             if self.knnlm_args.fp16:
-                yhat_knn_prob = yhat_knn_prob.half()
+                knn_probs = knn_probs.half()
                 lm_logits = lm_logits.half()
 
-            lm_logits = self.combine_knn_and_vocab_probs(yhat_knn_prob, lm_logits, self.knnlm_args.lmbda)
+            lm_logits = self.combine_knn_and_vocab_probs(knn_indices, knn_probs, lm_logits, self.knnlm_args.lmbda)
 
         loss = None
         if labels is not None:

@@ -26,6 +26,13 @@ class KNN_Dstore(object):
         start = time.time()
         index = faiss.read_index(args.indexfile, faiss.IO_FLAG_ONDISK_SAME_DIR)
         print('Reading datastore took {} s'.format(time.time() - start))
+
+        # print('gpu faiss index')
+        # co = faiss.GpuClonerOptions()
+        # co.useFloat16 = True
+        # res = faiss.StandardGpuResources()
+        # index = faiss.index_cpu_to_gpu(res, 0, index, co)
+
         index.nprobe = args.probe
 
         if args.dstore_fp16:
@@ -64,6 +71,7 @@ class KNN_Dstore(object):
 
     def get_knns(self, queries):
         start = time.time()
+        #import pdb; pdb.set_trace()
         dists, knns = self.index.search(queries.detach().cpu().float().numpy(), self.k)
         return dists, knns
 
@@ -95,11 +103,16 @@ class KNN_Dstore(object):
 
         # queries  are TxBxC
         # reshape: (TxB)xC
-        import pdb; pdb.set_trace()
+        #import pdb; pdb.set_trace()
         qshape = queries.shape
         queries = queries.view(-1, qshape[-1])
         src = src.contiguous().view(-1)
+
+        start_knn = time.time()
         dists, knns = self.get_knns(queries[src != pad_idx])
+        end_knn = time.time()
+
+        print(f'got dists and knns in {end_knn - start_knn} seconds')
 
         # (T_reducedxB)xK
         dists = torch.from_numpy(dists).cuda()
@@ -107,8 +120,16 @@ class KNN_Dstore(object):
         dists = dist_func(dists, knns, queries[src != pad_idx, :], function=self.sim_func)
         probs = F.log_softmax(dists, dim=-1, dtype=torch.float32)
 
-        #(TxB)xV
-        full_knn_probs = torch.zeros((qshape[0] * qshape[1]), self.vals.shape[0]).cuda()
-        full_knn_probs[torch.from_numpy(self.vals[knns])] = probs
+        mid = time.time()
+        print(f'got probs in {mid - start} seconds')
 
-        return full_knn_probs.view(qshape[0], qshape[1], self.vals.shape[0]) # TxBxV
+        #(TxB)xV
+        #yhat_knn = torch.from_numpy(self.vals[knns])
+        #return yhat_knn, probs
+        #import pdb; pdb.set_trace()
+        #full_knn_probs = torch.zeros(*queries.shape).cuda()
+        #full_knn_probs[torch.from_numpy(self.vals[knns].squeeze())] = probs
+
+        indices = torch.from_numpy(self.vals[knns].squeeze())
+
+        return indices.view(qshape[0], qshape[1], self.k), probs.view(qshape[0], qshape[1], self.k) # TxBxK
