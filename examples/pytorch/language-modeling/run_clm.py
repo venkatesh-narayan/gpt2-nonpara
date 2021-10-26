@@ -375,6 +375,9 @@ def main():
 
             model.knnlm_args.save_knnlm_dstore = model_args.save_knnlm_dstore
             model.knnlm_args.knnlm = model_args.knnlm
+
+            # pass tokenizer for debug purpose
+            model.tokenizer = tokenizer
         else:
             model = GPT2LMHeadModel.from_pretrained(
                 model_args.model_name_or_path,

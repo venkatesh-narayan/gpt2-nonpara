@@ -8,7 +8,7 @@ import time
 #from fairseq.data import Dictionary
 
 class KNN_Dstore(object):
-    def __init__(self, args):
+    def __init__(self, args, vocab_size):
         self.half = args.fp16
         self.dimension = args.decoder_embed_dim
         self.k = args.k
@@ -16,6 +16,9 @@ class KNN_Dstore(object):
         self.metric_type = args.faiss_metric_type
         self.sim_func = args.knn_sim_func
         self.dstore_fp16 = args.dstore_fp16
+
+        self.vocab_size = vocab_size
+
         self.index = self.setup_faiss(args)
 
 
@@ -27,11 +30,11 @@ class KNN_Dstore(object):
         index = faiss.read_index(args.indexfile, faiss.IO_FLAG_ONDISK_SAME_DIR)
         print('Reading datastore took {} s'.format(time.time() - start))
 
-        # print('gpu faiss index')
-        # co = faiss.GpuClonerOptions()
-        # co.useFloat16 = True
-        # res = faiss.StandardGpuResources()
-        # index = faiss.index_cpu_to_gpu(res, 0, index, co)
+        print('gpu faiss index')
+        co = faiss.GpuClonerOptions()
+        co.useFloat16 = True
+        res = faiss.StandardGpuResources()
+        index = faiss.index_cpu_to_gpu(res, 0, index, co)
 
         index.nprobe = args.probe
 
@@ -112,24 +115,59 @@ class KNN_Dstore(object):
         dists, knns = self.get_knns(queries[src != pad_idx])
         end_knn = time.time()
 
-        print(f'got dists and knns in {end_knn - start_knn} seconds')
+        # print(f'got dists and knns in {end_knn - start_knn} seconds')
 
         # (T_reducedxB)xK
-        dists = torch.from_numpy(dists).cuda()
+        dists = queries.new_tensor(dists)
         start = time.time()
         dists = dist_func(dists, knns, queries[src != pad_idx, :], function=self.sim_func)
         probs = F.log_softmax(dists, dim=-1, dtype=torch.float32)
 
-        mid = time.time()
-        print(f'got probs in {mid - start} seconds')
+        # mid = time.time()
+        # print(f'got probs in {mid - start} seconds')
+
+        # index_mask = torch.eq(queries.new_tensor(self.vals[knns], dtype=torch.long).squeeze(-1), tgt[knn_mask].unsqueeze(-1)).float()
+        # index_mask[index_mask == 0] = -10000 # for stability
+        # index_mask[index_mask == 1] = 0
 
         #(TxB)xV
-        #yhat_knn = torch.from_numpy(self.vals[knns])
-        #return yhat_knn, probs
-        #import pdb; pdb.set_trace()
-        #full_knn_probs = torch.zeros(*queries.shape).cuda()
-        #full_knn_probs[torch.from_numpy(self.vals[knns].squeeze())] = probs
+        # yhat_knn = torch.from_numpy(self.vals[knns])
+        # return yhat_knn, probs
+        # import pdb; pdb.set_trace()
 
-        indices = torch.from_numpy(self.vals[knns].squeeze())
+        # import pdb; pdb.set_trace()
+        indices = dists.new_tensor(self.vals[knns].squeeze(), dtype=torch.int64)
 
-        return indices.view(qshape[0], qshape[1], self.k), probs.view(qshape[0], qshape[1], self.k) # TxBxK
+        # mapping: (T_reducedxB)xK
+        unique_indices, mapping = torch.unique(indices, return_inverse=True)
+
+        # (T_reducedxB)xKxn where n = num unique vals in indices
+        knn_scores_by_index = dists.new_full([indices.size(0), indices.size(1), len(unique_indices)], -10000)
+        knn_vals_by_index = dists.new_full([indices.size(0), indices.size(1), len(unique_indices)], 0, dtype=torch.long)
+
+        # (T_reducedxB)xKx1
+        indices = indices.unsqueeze(2)
+        probs = probs.unsqueeze(2)
+        mapping = mapping.unsqueeze(2)
+
+        # (T_reducedxB)xKxn
+        knn_scores_by_index.scatter_(dim=2, index=mapping, src=probs)
+        knn_vals_by_index.scatter_(dim=2, index=mapping, src=indices)
+
+        # (T_reducedxB)xKxn -> (T_reducedxB)xn
+        # note that the last dimension is sparse with only one neuron activated
+        knn_scores_by_index = knn_scores_by_index.logsumexp(dim=1)
+        knn_vals_by_index = knn_vals_by_index.max(dim=1)[0]
+
+        # import pdb; pdb.set_trace()
+        # (T_reducedxB)xV
+        full_knn_scores_hat = queries.new_full([queries.size(0), self.vocab_size], -10000)
+        full_knn_scores_hat.scatter_(dim=1, index=knn_vals_by_index, src=knn_scores_by_index)
+
+        # import pdb; pdb.set_trace()
+        # (TxB)xV
+        full_knn_scores = queries.new_full([queries.size(0), self.vocab_size], -10000)
+        full_knn_scores[src != pad_idx] = full_knn_scores_hat
+
+        return full_knn_scores.view(qshape[0], qshape[1], -1)
+

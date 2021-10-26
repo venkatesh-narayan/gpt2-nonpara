@@ -26,6 +26,8 @@ import torch.utils.checkpoint
 from torch import nn
 from torch.nn import CrossEntropyLoss, MSELoss
 
+import numpy as np
+
 import argparse
 
 from ...activations import ACT2FN
@@ -882,7 +884,7 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
                     raise ValueError("no trained faiss index!")
 
             # at this point, we should be able to make KNN_Dstore
-            self.knn_dstore = KNN_Dstore(self.knnlm_args)
+            self.knn_dstore = KNN_Dstore(self.knnlm_args, vocab_size=config.vocab_size, tokenizer=self.tokenizer)
 
         # for sliding window -- will be set in run_clm, when the data is being processed
         self.start_idxs = None
@@ -976,7 +978,7 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
 
         knnlm_args.knn_keytype           = getattr(knnlm_args, 'knn_keytype', 'last_ffn_input')
         knnlm_args.dstore_fp16           = getattr(knnlm_args, 'dstore_fp16', True)
-        knnlm_args.lmbda                 = getattr(knnlm_args, 'lmbda', 0.0) # might need to change this
+        knnlm_args.lmbda                 = getattr(knnlm_args, 'lmbda', 0.25) # might need to change this
         knnlm_args.tokens_per_sample     = getattr(knnlm_args, 'tokens_per_sample', 1024) # tokens per sample was 1536 in default knnlm but i think it should be 1024 here
 
         return knnlm_args
@@ -986,7 +988,7 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
         knnlm_args.dstore_filename    = getattr(knnlm_args, 'dstore_filename', knnlm_args.dstore_mmap)
         knnlm_args.faiss_index        = getattr(knnlm_args, 'faiss_index', 'checkpoints/knn.index') # default save location
         knnlm_args.indexfile          = getattr(knnlm_args, 'indexfile', 'checkpoints/knn.index')
-        knnlm_args.k                  = getattr(knnlm_args, 'k', 1024)
+        knnlm_args.k                  = getattr(knnlm_args, 'k', 64)
         knnlm_args.faiss_metric_type  = getattr(knnlm_args, 'faiss_metric_type', 'l2')
         knnlm_args.knn_sim_func       = getattr(knnlm_args, 'knn_sim_func', 'do_not_recomp_l2')
         knnlm_args.probe              = getattr(knnlm_args, 'probe', 32)
@@ -1038,18 +1040,19 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
         return knnlm_args
 
     # taken from knnlm/fairseq/sequence_scorer.py
-    def combine_knn_and_vocab_probs(self, knn_indices, knn_p, vocab_p, coeff):
+    def combine_knn_and_vocab_probs(self, knn_p, vocab_p, coeff):
         start = time.time()
         import pdb; pdb.set_trace()
         # same_part = vocab_p[knn_indices]
-        some_part = torch.gather(vocab_p, dim=2, index=knn_indices)
-        coeffs = torch.ones_like(same_part)
+        # some_part = torch.gather(vocab_p, dim=2, index=knn_indices)
+        # coeffs = torch.ones_like(same_part)
+        combine_probs = torch.stack([vocab_p, knn_p], dim=0)
+        coeffs = torch.ones_like(combine_probs)
         coeffs[0] = np.log(1 - coeff)
         coeffs[1] = np.log(coeff)
-        curr_prob = torch.logsumexp(same_part + coeffs, dim=0)
-        vocab_p[knn_indices] = curr_prob
+        curr_prob = torch.logsumexp(combine_probs + coeffs, dim=0)
 
-        print(f'combined probs in {time.time() - start} seconds')
+        # print(f'combined probs in {time.time() - start} seconds')
 
         return vocab_p
 
@@ -1124,20 +1127,20 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
 
             queries = knn_emb
 
-            print('going to start get_knn_log_prob')
+            # print('going to start get_knn_log_prob')
             s = time.time()
             # padding is usually -100 in huggingface transformers models
-            knn_indices, knn_probs = self.knn_dstore.get_knn_log_prob(queries,
-                                                                      labels,
-                                                                      pad_idx=-100)
+            knn_probs = self.knn_dstore.get_knn_log_prob(queries,
+                                                         labels,
+                                                         pad_idx=-100)
 
-            print(f'took {time.time() - s} seconds')
+            # print(f'took {time.time() - s} seconds')
 
             if self.knnlm_args.fp16:
                 knn_probs = knn_probs.half()
                 lm_logits = lm_logits.half()
 
-            lm_logits = self.combine_knn_and_vocab_probs(knn_indices, knn_probs, lm_logits, self.knnlm_args.lmbda)
+            lm_logits = self.combine_knn_and_vocab_probs(knn_probs, lm_logits, self.knnlm_args.lmbda)
 
         loss = None
         if labels is not None:
