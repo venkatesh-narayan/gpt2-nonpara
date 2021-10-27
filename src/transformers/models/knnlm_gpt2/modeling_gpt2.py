@@ -884,7 +884,9 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
                     raise ValueError("no trained faiss index!")
 
             # at this point, we should be able to make KNN_Dstore
-            self.knn_dstore = KNN_Dstore(self.knnlm_args, vocab_size=config.vocab_size, tokenizer=self.tokenizer)
+            self.knn_dstore = KNN_Dstore(self.knnlm_args,
+                                         vocab_size=config.vocab_size,
+                                         tokenizer=config.tokenizer)
 
         # for sliding window -- will be set in run_clm, when the data is being processed
         self.start_idxs = None
@@ -970,7 +972,7 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
         knnlm_args.context_window        = getattr(knnlm_args, 'context_window', 512) # context window size was 1536 for default knnlm but my stride value from run_clm.py was 512
         knnlm_args.softmax_batch         = getattr(knnlm_args, 'softmax_batch', 1024)
         knnlm_args.lm_eval               = getattr(knnlm_args, 'lm_eval', self.training)
-        knnlm_args.knnlm                 = getattr(knnlm_args, 'knnlm', True)
+        knnlm_args.knnlm                 = getattr(knnlm_args, 'knnlm', False)
         knnlm_args.save_knnlm_dstore     = getattr(knnlm_args, 'save_knnlm_dstore', True) # initially, save the dstore
 
         knnlm_args.dstore_mmap           = getattr(knnlm_args, 'dstore_mmap', 'checkpoints/dstore') # default save location
@@ -1042,7 +1044,7 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
     # taken from knnlm/fairseq/sequence_scorer.py
     def combine_knn_and_vocab_probs(self, knn_p, vocab_p, coeff):
         start = time.time()
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         # same_part = vocab_p[knn_indices]
         # some_part = torch.gather(vocab_p, dim=2, index=knn_indices)
         # coeffs = torch.ones_like(same_part)
@@ -1140,6 +1142,7 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
                 knn_probs = knn_probs.half()
                 lm_logits = lm_logits.half()
 
+            # import pdb; pdb.set_trace()
             lm_logits = self.combine_knn_and_vocab_probs(knn_probs, lm_logits, self.knnlm_args.lmbda)
 
         loss = None

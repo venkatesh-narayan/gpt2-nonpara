@@ -1848,6 +1848,12 @@ class Trainer:
             labels = passed_labels # used to be none -- added passed labels to ensure that we get some labels for knnlm
         outputs = model(**inputs)
 
+        assert labels is not None # just a sanity check
+
+        # labels are not shifted by this point, so shift them
+        shifted_labels = torch.roll(labels, shifts=-1, dims=1)
+        shifted_labels[:, -1] = model.config.eos_token_id
+
         # for knnlm -- writing to datastore
         if hasattr(model, 'knnlm_args'):
             #print(f'save dstore: {model.knnlm_args.save_knnlm_dstore}')
@@ -1857,11 +1863,9 @@ class Trainer:
                 #import pdb; pdb.set_trace()
                 for i in range(len(model.start_idxs)):
                     dkeys = outputs.knn_emb[i, model.start_idxs[i]:, :]
-
                     assert dkeys is not None # just a sanity check
-                    assert labels is not None # also a sanity check; need targets
 
-                    stripped_labels = labels[i, model.start_idxs[i]:]
+                    stripped_labels = shifted_labels[i, model.start_idxs[i]:]
                     stripped_labels = stripped_labels[stripped_labels.ne(-100)]
 
                     shape = dkeys.shape

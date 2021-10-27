@@ -361,6 +361,9 @@ def main():
             "You can do it from another script, save it, and load it from here, using --tokenizer_name."
         )
 
+    # pass tokenizer for debug purpose
+    config.tokenizer = tokenizer
+
     # change model from auto to knnlmgpt2
     if model_args.model_name_or_path:
         if model_args.is_knnlm_model:
@@ -376,8 +379,6 @@ def main():
             model.knnlm_args.save_knnlm_dstore = model_args.save_knnlm_dstore
             model.knnlm_args.knnlm = model_args.knnlm
 
-            # pass tokenizer for debug purpose
-            model.tokenizer = tokenizer
         else:
             model = GPT2LMHeadModel.from_pretrained(
                 model_args.model_name_or_path,

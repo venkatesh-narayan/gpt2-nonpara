@@ -8,7 +8,7 @@ import time
 #from fairseq.data import Dictionary
 
 class KNN_Dstore(object):
-    def __init__(self, args, vocab_size):
+    def __init__(self, args, vocab_size, tokenizer=None):
         self.half = args.fp16
         self.dimension = args.decoder_embed_dim
         self.k = args.k
@@ -18,6 +18,7 @@ class KNN_Dstore(object):
         self.dstore_fp16 = args.dstore_fp16
 
         self.vocab_size = vocab_size
+        self.tokenizer = tokenizer
 
         self.index = self.setup_faiss(args)
 
@@ -111,6 +112,7 @@ class KNN_Dstore(object):
         queries = queries.view(-1, qshape[-1])
         src = src.contiguous().view(-1)
 
+        # import pdb; pdb.set_trace()
         start_knn = time.time()
         dists, knns = self.get_knns(queries[src != pad_idx])
         end_knn = time.time()
