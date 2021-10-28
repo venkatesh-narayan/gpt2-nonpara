@@ -31,7 +31,7 @@ class KNN_Dstore(object):
         index = faiss.read_index(args.indexfile, faiss.IO_FLAG_ONDISK_SAME_DIR)
         print('Reading datastore took {} s'.format(time.time() - start))
 
-        print('gpu faiss index')
+        #print('gpu faiss index')
         co = faiss.GpuClonerOptions()
         co.useFloat16 = True
         res = faiss.StandardGpuResources()

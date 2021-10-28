@@ -1851,6 +1851,7 @@ class Trainer:
         assert labels is not None # just a sanity check
 
         # labels are not shifted by this point, so shift them
+        # import pdb; pdb.set_trace()
         shifted_labels = torch.roll(labels, shifts=-1, dims=1)
         shifted_labels[:, -1] = model.config.eos_token_id
 
@@ -1900,8 +1901,6 @@ class Trainer:
         else:
             # We don't use .loss here since the model may return tuples instead of ModelOutput.
             loss = outputs["loss"] if isinstance(outputs, dict) else outputs[0]
-
-        # loss = loss * model.stride / self.end_loc # for sliding window context
 
         return (loss, outputs) if return_outputs else loss
 
