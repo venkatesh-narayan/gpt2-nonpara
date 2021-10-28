@@ -1874,6 +1874,11 @@ class Trainer:
                         if self.dstore_idx + shape[0] > model.knnlm_args.dstore_size:
                             shape = [model.knnlm_args.dstore_size - self.dstore_idx]
                             dkeys = dkeys[:shape[0]]
+
+
+                        # sanity check
+                        assert shape[0] == len(stripped_labels)
+
                         if model.knnlm_args.dstore_fp16:
                             self.dstore_keys[self.dstore_idx:shape[0]+self.dstore_idx] = dkeys.view(
                                 -1, model.knnlm_args.decoder_embed_dim).cpu().numpy().astype(np.float16)

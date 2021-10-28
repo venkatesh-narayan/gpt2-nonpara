@@ -23,6 +23,7 @@ from typing import Optional, Tuple
 
 import torch
 import torch.utils.checkpoint
+import torch.nn.functional as F
 from torch import nn
 from torch.nn import CrossEntropyLoss, MSELoss
 
@@ -1137,6 +1138,8 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
                                                          pad_idx=-100)
 
             # print(f'took {time.time() - s} seconds')
+
+            lm_logits = F.log_softmax(lm_logits, dim=-1)
 
             if self.knnlm_args.fp16:
                 knn_probs = knn_probs.half()

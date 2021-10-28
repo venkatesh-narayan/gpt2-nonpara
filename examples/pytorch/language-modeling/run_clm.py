@@ -196,6 +196,10 @@ class DataTrainingArguments:
         default=True, metadata={"help": "Whether to keep line breaks when using TXT files or not."}
     )
 
+    debug_custom: bool = field(
+        default=False, metadata={"help": "debug mode"}
+    )
+
     def __post_init__(self):
         if self.dataset_name is None and self.train_file is None and self.validation_file is None:
             raise ValueError("Need either a dataset name or a training/validation file.")
@@ -406,7 +410,7 @@ def main():
 
     # Preprocessing the datasets.
     # First we tokenize all the texts.
-    if training_args.do_train or model_args.save_knnlm_dstore:
+    if training_args.do_train or model_args.save_knnlm_dstore or data_args.debug_custom:
         column_names = raw_datasets["train"].column_names
     else:
         column_names = raw_datasets["validation"].column_names
@@ -535,7 +539,7 @@ def main():
             desc=f"Grouping texts in chunks of {block_size}",
         )
 
-    if training_args.do_train or model_args.save_knnlm_dstore:
+    if training_args.do_train or model_args.save_knnlm_dstore or data_args.debug_custom:
         if "train" not in tokenized_datasets:
             raise ValueError("--do_train requires a train dataset")
         train_dataset = lm_datasets["train"]
@@ -568,6 +572,7 @@ def main():
             args=training_args,
             train_dataset=train_dataset if training_args.do_train else None,
             eval_dataset=eval_dataset if training_args.do_eval else None,
+            # eval_dataset=train_dataset, # for debug
             tokenizer=tokenizer,
             # Data collator will default to DataCollatorWithPadding, so we change it.
             data_collator=default_data_collator,
