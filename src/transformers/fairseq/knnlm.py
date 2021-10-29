@@ -163,7 +163,7 @@ class KNN_Dstore(object):
 
         # import pdb; pdb.set_trace()
         # (T_reducedxB)xV
-        full_knn_scores_hat = queries.new_full([queries.size(0), self.vocab_size], -10000)
+        full_knn_scores_hat = queries.new_full([knn_scores_by_index.shape[0], self.vocab_size], -10000)
         full_knn_scores_hat.scatter_(dim=1, index=knn_vals_by_index, src=knn_scores_by_index)
 
         # import pdb; pdb.set_trace()
