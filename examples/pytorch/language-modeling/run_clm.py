@@ -124,6 +124,14 @@ class ModelArguments:
         default=False, metadata={"help": "save knnlm dstore; note that this cannot be true while knnlm is true"}
     )
 
+    dstore_mmap: Optional[str] = field(
+        default=None, metadata={"help": "dstore mmap location"}
+    )
+
+    faiss_index: Optional[str] = field(
+        default=None, metadata={"help": "faiss_index location"}
+    )
+
     def __post_init__(self):
         if self.config_overrides is not None and (self.config_name is not None or self.model_name_or_path is not None):
             raise ValueError(
@@ -378,11 +386,12 @@ def main():
                 cache_dir=model_args.cache_dir,
                 revision=model_args.model_revision,
                 use_auth_token=True if model_args.use_auth_token else None,
+                knnlm=model_args.knnlm,
+                save_knnlm_dstore=model_args.save_knnlm_dstore,
+                dstore_mmap=model_args.dstore_mmap,
+                faiss_index=model_args.faiss_index,
+                stride=min(tokenizer.model_max_length, data_args.stride),
             )
-
-            model.knnlm_args.save_knnlm_dstore = model_args.save_knnlm_dstore
-            model.knnlm_args.knnlm = model_args.knnlm
-
         else:
             model = GPT2LMHeadModel.from_pretrained(
                 model_args.model_name_or_path,
@@ -398,9 +407,6 @@ def main():
             model = knnlmGPT2LMHeadModel.from_config(config)
             n_params = sum(dict((p.data_ptr(), p.numel()) for p in model.parameters()).values())
             logger.info(f"Training new model from scratch - Total size={n_params/2**20:.2f}M params")
-
-            model.knnlm_args.save_knnlm_dstore = model_args.save_knnlm_dstore
-            model.knnlm_args.knnlm = model_args.knnlm
         else:
             model = GPT2LMHeadModel.from_config(config)
             n_params = sum(dict((p.data_ptr(), p.numel()) for p in model.parameters()).values())
@@ -421,7 +427,6 @@ def main():
 
     stride = min(tokenizer.model_max_length, data_args.stride) # for sliding window context
     max_length = model.config.n_positions # default max len
-    setattr(model, 'stride', stride)
 
     #tokenizer.add_special_tokens({'pad_token': "[PAD]"})
     #model.resize_token_embeddings(len(tokenizer))

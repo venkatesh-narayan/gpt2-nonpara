@@ -1852,22 +1852,25 @@ class Trainer:
 
         # labels are not shifted by this point, so shift them
         # import pdb; pdb.set_trace()
-        shifted_labels = torch.roll(labels, shifts=-1, dims=1)
-        shifted_labels[:, -1] = model.config.eos_token_id
+        #shifted_labels = torch.roll(labels, shifts=-1, dims=1)
+        #shifted_labels[:, -1] = model.config.eos_token_id
 
         # for knnlm -- writing to datastore
         if hasattr(model, 'knnlm_args'):
             #print(f'save dstore: {model.knnlm_args.save_knnlm_dstore}')
             if model.knnlm_args.save_knnlm_dstore:
-                assert model.start_idxs is not None # sanity check
+                assert self.start_idxs is not None # sanity check
 
                 #import pdb; pdb.set_trace()
-                for i in range(len(model.start_idxs)):
-                    dkeys = outputs.knn_emb[i, model.start_idxs[i]:, :]
+                for i in range(len(self.start_idxs)):
+                    dkeys = outputs.knn_emb[i, self.start_idxs[i][0]:self.start_idxs[i][1], :]
                     assert dkeys is not None # just a sanity check
 
-                    stripped_labels = shifted_labels[i, model.start_idxs[i]:]
-                    stripped_labels = stripped_labels[stripped_labels.ne(-100)]
+                    # get appropriate labels, then shift, as labels aren't shifted by this point
+                    stripped_labels = labels[i, self.start_idxs[i][0]:self.start_idxs[i][1]]
+                    stripped_labels = torch.roll(stripped_labels, shifts=-1, dims=0)
+                    stripped_labels[-1] = model.config.eos_token_id
+                    #stripped_labels = stripped_labels[stripped_labels.ne(-100)]
 
                     shape = dkeys.shape
                     if shape[0] == model.knnlm_args.tokens_per_sample:
@@ -2320,10 +2323,6 @@ class Trainer:
                                                     dtype=np.int, mode='w+',
                                                     shape=(model.knnlm_args.dstore_size, 1))
 
-            model.knnlm_args.context_window = model.stride
-            model.knnlm_args.tokens_per_sample = model.stride
-
-
         observed_num_examples = 0
         # Main evaluation loop
         for step, inputs in enumerate(dataloader):
@@ -2335,14 +2334,14 @@ class Trainer:
                 if batch_size is None:
                     batch_size = observed_batch_size
 
-            #import pdb; pdb.set_trace();
-            if hasattr(model, 'knnlm_args'):
-                model.start_idxs = [0] * batch_size
-                #for i in range(batch_size):
-                #    model.start_idxs.append(min(model.config.n_positions, i * (model.config.n_positions - model.stride)))
+            if hasattr(model, "knnlm_args"):
+                self.start_idxs = [] # contains tuples of start and end locations per batch
+                for i in range(batch_size):
+                    curr_label = inputs["labels"][i, :] # get current (unshifted) label
+                    possibilities = list(range(0, model.config.n_positions, model.model_kwargs["stride"])) # get all multiples of stride from 0 to n_positions EXCLUDING n_positions
+                    start_idx = possibilities[torch.argmax(curr_label[possibilities])] # curr_label[possibilities] will be all -100's except for one -- get the one that's not -100
+                    self.start_idxs.append((start_idx, start_idx + model.model_kwargs["stride"])) # end index = start index + stride
 
-                #model.start_idxs = [max(i + model.stride - model.config.n_positions, 0) for i in range(model.config.n_positions - model.stride, inputs["input_ids"].size(1), model.stride)]
-            #self.end_loc = [min(i + model.stride, inputs["input_ids"].size(1)) for i in range(model.config.n_positions - model.stride, inputs["input_ids"].size(1), model.stride)][-1]
 
             # Prediction step
             #print(f'currently on step: {step}')
