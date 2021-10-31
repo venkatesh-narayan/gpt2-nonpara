@@ -2338,14 +2338,13 @@ class Trainer:
                 self.start_idxs = [] # contains tuples of start and end locations per batch
                 for i in range(batch_size):
                     curr_label = inputs["labels"][i, :] # get current (unshifted) label
-                    possibilities = list(range(0, model.config.n_positions, model.model_kwargs["stride"])) # get all multiples of stride from 0 to n_positions EXCLUDING n_positions
-                    start_idx = possibilities[torch.argmax(curr_label[possibilities])] # curr_label[possibilities] will be all -100's except for one -- get the one that's not -100
-                    self.start_idxs.append((start_idx, start_idx + model.model_kwargs["stride"])) # end index = start index + stride
-
+                    indices = torch.nonzero(curr_label != -100)
+                    self.start_idxs.append((indices[0].item(), indices[-1].item() + 1)) # last is exclusive
 
             # Prediction step
             #print(f'currently on step: {step}')
             #print('about to enter prediction step')
+            #import pdb; pdb.set_trace()
             loss, logits, labels = self.prediction_step(model, inputs, prediction_loss_only, ignore_keys=ignore_keys)
 
             # import pdb; pdb.set_trace()
