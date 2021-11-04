@@ -854,16 +854,16 @@ class GPT2Model(GPT2PreTrainedModel):
 class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
     _keys_to_ignore_on_load_missing = [r"attn.masked_bias", r"attn.bias", r"lm_head.weight"]
 
-    def __init__(self, config, **model_kwargs):
+    def __init__(self, config):
         super().__init__(config)
 
-        self.model_kwargs = model_kwargs
-        if not model_kwargs["knnlm"] and not model_kwargs["save_knnlm_dstore"]:
-            raise ValueError("need at least one of knnlm and save_knnlm_dstore to be true!")
-        if model_kwargs["dstore_mmap"] is None:
-            raise ValueError("no dstore mmap found!")
-        if model_kwargs["knnlm"] and model_kwargs["faiss_index"] is None:
-            raise ValueError("no faiss index found!")
+        # self.model_kwargs = model_kwargs
+        # if not model_kwargs["knnlm"] and not model_kwargs["save_knnlm_dstore"]:
+        #     raise ValueError("need at least one of knnlm and save_knnlm_dstore to be true!")
+        # if model_kwargs["dstore_mmap"] is None:
+        #     raise ValueError("no dstore mmap found!")
+        # if model_kwargs["knnlm"] and model_kwargs["faiss_index"] is None:
+        #     raise ValueError("no faiss index found!")
 
         self.transformer = GPT2Model(config)
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
@@ -979,27 +979,27 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
 
         knnlm_args.output_word_probs     = getattr(knnlm_args, 'output_word_probs', False)
         knnlm_args.output_word_stats     = getattr(knnlm_args, 'output_word_stats', False)
-        knnlm_args.context_window        = getattr(knnlm_args, 'context_window', self.model_kwargs['stride'])
+        knnlm_args.context_window        = getattr(knnlm_args, 'context_window', self.config.stride)
         knnlm_args.softmax_batch         = getattr(knnlm_args, 'softmax_batch', 1024)
         knnlm_args.lm_eval               = getattr(knnlm_args, 'lm_eval', self.training)
-        knnlm_args.knnlm                 = getattr(knnlm_args, 'knnlm', self.model_kwargs['knnlm'])
-        knnlm_args.save_knnlm_dstore     = getattr(knnlm_args, 'save_knnlm_dstore', self.model_kwargs["save_knnlm_dstore"])
+        knnlm_args.knnlm                 = getattr(knnlm_args, 'knnlm', self.config.knnlm)
+        knnlm_args.save_knnlm_dstore     = getattr(knnlm_args, 'save_knnlm_dstore', self.config.save_knnlm_dstore)
 
-        knnlm_args.dstore_mmap           = getattr(knnlm_args, 'dstore_mmap', self.model_kwargs["dstore_mmap"])
-        knnlm_args.dstore_size           = getattr(knnlm_args, 'dstore_size', self.model_kwargs["dstore_size"])
+        knnlm_args.dstore_mmap           = getattr(knnlm_args, 'dstore_mmap', self.config.dstore_mmap)
+        knnlm_args.dstore_size           = getattr(knnlm_args, 'dstore_size', self.config.dstore_size)
 
         knnlm_args.knn_keytype           = getattr(knnlm_args, 'knn_keytype', 'last_ffn_input')
         knnlm_args.dstore_fp16           = getattr(knnlm_args, 'dstore_fp16', True)
         knnlm_args.lmbda                 = getattr(knnlm_args, 'lmbda', 0.25)
-        knnlm_args.tokens_per_sample     = getattr(knnlm_args, 'tokens_per_sample', self.model_kwargs['stride'])
+        knnlm_args.tokens_per_sample     = getattr(knnlm_args, 'tokens_per_sample', self.config.stride)
 
         return knnlm_args
 
     # add args that aren't in knnlm/fairseq/models/transformer_lm.py
     def add_other_needed_args(self, knnlm_args, config):
         knnlm_args.dstore_filename    = getattr(knnlm_args, 'dstore_filename', knnlm_args.dstore_mmap)
-        knnlm_args.faiss_index        = getattr(knnlm_args, 'faiss_index', self.model_kwargs["faiss_index"])
-        knnlm_args.indexfile          = getattr(knnlm_args, 'indexfile', self.model_kwargs["faiss_index"])
+        knnlm_args.faiss_index        = getattr(knnlm_args, 'faiss_index', self.config.faiss_index)
+        knnlm_args.indexfile          = getattr(knnlm_args, 'indexfile', self.config.faiss_index)
         knnlm_args.k                  = getattr(knnlm_args, 'k', 32)
         knnlm_args.faiss_metric_type  = getattr(knnlm_args, 'faiss_metric_type', 'l2')
         knnlm_args.knn_sim_func       = getattr(knnlm_args, 'knn_sim_func', 'do_not_recomp_l2')

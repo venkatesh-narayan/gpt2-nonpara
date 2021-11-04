@@ -61,6 +61,28 @@ logger = logging.getLogger(__name__)
 MODEL_CONFIG_CLASSES = list(MODEL_FOR_CAUSAL_LM_MAPPING.keys())
 MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
 
+@dataclass
+class KnnArguments:
+    is_knnlm_model: bool = field(
+            default=False, metadata={"help": "tells whether or not the model is a knnlm_* model"}
+    )
+
+    knnlm: bool = field(
+        default=False, metadata={"help": "use knnlm to influence probabilities; note that this cannot be true while save_knnlm_dstore is true"}
+    )
+
+    save_knnlm_dstore: bool = field(
+        default=False, metadata={"help": "save knnlm dstore; note that this cannot be true while knnlm is true"}
+    )
+
+    dstore_mmap: Optional[str] = field(
+        default=None, metadata={"help": "dstore mmap location"}
+    )
+
+    faiss_index: Optional[str] = field(
+        default=None, metadata={"help": "faiss_index location"}
+    )
+
 
 @dataclass
 class ModelArguments:
@@ -110,26 +132,6 @@ class ModelArguments:
             "help": "Will use the token generated when running `transformers-cli login` (necessary to use this script "
             "with private models)."
         },
-    )
-
-    is_knnlm_model: bool = field(
-            default=False, metadata={"help": "tells whether or not the model is a knnlm_* model"}
-    )
-
-    knnlm: bool = field(
-        default=False, metadata={"help": "use knnlm to influence probabilities; note that this cannot be true while save_knnlm_dstore is true"}
-    )
-
-    save_knnlm_dstore: bool = field(
-        default=False, metadata={"help": "save knnlm dstore; note that this cannot be true while knnlm is true"}
-    )
-
-    dstore_mmap: Optional[str] = field(
-        default=None, metadata={"help": "dstore mmap location"}
-    )
-
-    faiss_index: Optional[str] = field(
-        default=None, metadata={"help": "faiss_index location"}
     )
 
     def __post_init__(self):
@@ -225,13 +227,13 @@ def main():
     # or by passing the --help flag to this script.
     # We now keep distinct sets of args, for a cleaner separation of concerns.
 
-    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, TrainingArguments))
+    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, TrainingArguments, KnnArguments))
     if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
         # If we pass only one argument to the script and it's the path to a json file,
         # let's parse it to get our arguments.
-        model_args, data_args, training_args = parser.parse_json_file(json_file=os.path.abspath(sys.argv[1]))
+        model_args, data_args, training_args, knn_args = parser.parse_json_file(json_file=os.path.abspath(sys.argv[1]))
     else:
-        model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+        model_args, data_args, training_args, knn_args = parser.parse_args_into_dataclasses()
 
     # Setup logging
     logging.basicConfig(
@@ -376,9 +378,13 @@ def main():
     # pass tokenizer for debug purpose
     config.tokenizer = tokenizer
 
+    # put generation args into config
+    for k, v in vars(knn_args).items():
+        setattr(config, k, v)
+
     # change model from auto to knnlmgpt2
     if model_args.model_name_or_path:
-        if model_args.is_knnlm_model:
+        if knn_args.is_knnlm_model:
             model = knnlmGPT2LMHeadModel.from_pretrained(
                 model_args.model_name_or_path,
                 from_tf=bool(".ckpt" in model_args.model_name_or_path),
@@ -386,11 +392,6 @@ def main():
                 cache_dir=model_args.cache_dir,
                 revision=model_args.model_revision,
                 use_auth_token=True if model_args.use_auth_token else None,
-                knnlm=model_args.knnlm,
-                save_knnlm_dstore=model_args.save_knnlm_dstore,
-                dstore_mmap=model_args.dstore_mmap,
-                faiss_index=model_args.faiss_index,
-                stride=min(tokenizer.model_max_length, data_args.stride),
             )
         else:
             model = GPT2LMHeadModel.from_pretrained(
