@@ -45,6 +45,7 @@ eval_strategy="steps"
 save_steps=3000
 
 
+debug=1
 extra_cmd=""
 debug_str=""
 
