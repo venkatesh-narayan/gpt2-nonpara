@@ -559,6 +559,14 @@ def main():
         if data_args.max_eval_samples is not None:
             eval_dataset = eval_dataset.select(range(data_args.max_eval_samples))
 
+    if training_args.do_predict:
+        if "test" not in tokenized_datasets:
+            raise ValueError("--do_predict requires a test dataset")
+        predict_dataset = lm_datasets["test"]
+
+        # if data_args.max_eval_samples is not None:
+        #     eval_dataset = eval_dataset.select(range(data_args.max_eval_samples))
+
     # Initialize our Trainer
     if model_args.save_knnlm_dstore:
         trainer = Trainer(
@@ -638,6 +646,24 @@ def main():
 
         trainer.log_metrics("eval", metrics)
         trainer.save_metrics("eval", metrics)
+
+    # Evaluation
+    if training_args.do_predict:
+        logger.info("*** predict ***")
+
+        # changed trainer.evaluate() for knnlm
+        metrics = trainer.predict(predict_dataset, metric_key_prefix="predict")
+
+        # max_eval_samples = data_args.max_eval_samples if data_args.max_eval_samples is not None else len(eval_dataset)
+        metrics["predict_samples"] = len(predict_dataset)
+        try:
+            perplexity = math.exp(metrics["predict_loss"])
+        except OverflowError:
+            perplexity = float("inf")
+        metrics["perplexity"] = perplexity
+
+        trainer.log_metrics("predict", metrics)
+        trainer.save_metrics("predict", metrics)
 
     if training_args.push_to_hub:
         kwargs = {"finetuned_from": model_args.model_name_or_path, "tasks": "text-generation"}
