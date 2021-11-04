@@ -986,7 +986,7 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
         knnlm_args.save_knnlm_dstore     = getattr(knnlm_args, 'save_knnlm_dstore', self.model_kwargs["save_knnlm_dstore"])
 
         knnlm_args.dstore_mmap           = getattr(knnlm_args, 'dstore_mmap', self.model_kwargs["dstore_mmap"])
-        knnlm_args.dstore_size           = getattr(knnlm_args, 'dstore_size', 119721489) # total length of training tokens
+        knnlm_args.dstore_size           = getattr(knnlm_args, 'dstore_size', self.model_kwargs["dstore_size"])
 
         knnlm_args.knn_keytype           = getattr(knnlm_args, 'knn_keytype', 'last_ffn_input')
         knnlm_args.dstore_fp16           = getattr(knnlm_args, 'dstore_fp16', True)
