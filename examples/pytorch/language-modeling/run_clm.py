@@ -376,7 +376,8 @@ def main():
         )
 
     # pass tokenizer for debug purpose
-    config.tokenizer = tokenizer
+    # config.tokenizer = tokenizer
+    config.tokenizer = None
 
     # put generation args into config
     for k, v in vars(knn_args).items():
@@ -417,7 +418,7 @@ def main():
 
     # Preprocessing the datasets.
     # First we tokenize all the texts.
-    if training_args.do_train or model_args.save_knnlm_dstore or data_args.debug_custom:
+    if training_args.do_train or knn_args.save_knnlm_dstore or data_args.debug_custom:
         column_names = raw_datasets["train"].column_names
     else:
         column_names = raw_datasets["validation"].column_names
@@ -545,7 +546,7 @@ def main():
             desc=f"Grouping texts in chunks of {block_size}",
         )
 
-    if training_args.do_train or model_args.save_knnlm_dstore or data_args.debug_custom:
+    if training_args.do_train or knn_args.save_knnlm_dstore or data_args.debug_custom:
         if "train" not in tokenized_datasets:
             raise ValueError("--do_train requires a train dataset")
         train_dataset = lm_datasets["train"]
@@ -569,7 +570,7 @@ def main():
         #     eval_dataset = eval_dataset.select(range(data_args.max_eval_samples))
 
     # Initialize our Trainer
-    if model_args.save_knnlm_dstore:
+    if knn_args.save_knnlm_dstore:
         trainer = Trainer(
             model=model,
             args=training_args,
@@ -613,7 +614,7 @@ def main():
         trainer.save_metrics("train", metrics)
         trainer.save_state()
 
-    if model_args.save_knnlm_dstore:
+    if knn_args.save_knnlm_dstore:
         logger.info("*** Building Datastore ***")
 
         # changed trainer.evaluate() for knnlm

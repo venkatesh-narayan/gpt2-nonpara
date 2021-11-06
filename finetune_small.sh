@@ -7,14 +7,16 @@
 #
 
 
-#SBATCH --output=slurm_output/finetune_small.out
-#SBATCH --error=slurm_output/finetune_small.err
-#SBATCH --gres=gpu:v100:1
+#SBATCH --output=slurm_output/slurm-%A-%a.out
+#SBATCH --error=slurm_output/slurm-%A-%a.out
+#SBATCH --gres=gpu:A6000:2
 #SBATCH --mem=16g
-#SBATCH --cpus-per-task=20
+#SBATCH --cpus-per-task=8
+#SBATCH --time=0
+#SBATCH --nodes=1
+#SBATCH --job-name=gpt2lm
 ##SBATCH --exclude=compute-0-31,compute-0-19,compute-0-15
 ##SBATCH --nodelist=compute-0-31,compute-0-30
-#SBATCH -t 0
 
 export WANDB_PROJECT=gpt2_lm
 export WANDB_WATCH="false"
@@ -22,11 +24,12 @@ export WANDB_ENTITY="gpt2-nonpara"
 
 DATE=`date +%Y%m%d`
 
-model="gpt2"
+model="gpt2-large"
 dataset="wikitext"
 report_to="wandb"
 
 max_steps=100000
+port=62227
 
 # learning hyperparams
 lr=5e-5
@@ -35,8 +38,8 @@ lr_scheduler_type="polynomial"
 warmup_steps=5000
 weight_decay=0
 
-bsz=16
-gradient_steps=1
+bsz=2
+gradient_steps=4
 
 logging_steps=100
 
@@ -45,7 +48,7 @@ eval_strategy="steps"
 save_steps=3000
 
 
-debug=1
+debug=0
 extra_cmd=""
 debug_str=""
 
@@ -70,7 +73,8 @@ exp_name=${model}.${dataset}.warm${warmup_steps}.wd${weight_decay}${debug_str}
 SAVE=checkpoints/${dataset}/${DATE}/${exp_name}
 rm -rf ${SAVE}; mkdir -p ${SAVE}
 
-python examples/pytorch/language-modeling/run_clm.py \
+# python -u examples/pytorch/language-modeling/run_clm.py \
+python -m torch.distributed.launch --nproc_per_node 2 --master_port=${port} examples/pytorch/language-modeling/run_clm.py \
     --model_name_or_path ${model} \
     --dataset_name ${dataset} \
     --dataset_config_name wikitext-103-raw-v1 \
@@ -91,6 +95,7 @@ python examples/pytorch/language-modeling/run_clm.py \
     --save_steps ${save_steps} \
     --eval_steps ${save_steps} \
     --load_best_model_at_end \
+    --fp16 \
     --run_name ${DATE}.${exp_name} \
     --evaluation_strategy ${eval_strategy} \
     --save_strategy ${eval_strategy} \

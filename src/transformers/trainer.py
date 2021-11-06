@@ -1848,7 +1848,7 @@ class Trainer:
             labels = passed_labels # used to be none -- added passed labels to ensure that we get some labels for knnlm
         outputs = model(**inputs)
 
-        assert labels is not None # just a sanity check
+        # assert labels is not None # just a sanity check
 
         # labels are not shifted by this point, so shift them
         # import pdb; pdb.set_trace()
