@@ -10,6 +10,8 @@ import os
 import time
 import argparse
 
+import numpy as np
+
 import faiss
 from faiss.contrib.ondisk import merge_ondisk
 
@@ -18,6 +20,7 @@ parser = argparse.ArgumentParser()
 
 parser.add_argument('--num_shards', type=int, default=20, help='number of shards created')
 parser.add_argument('--faiss_index', type=str, help='file to write the faiss index')
+parser.add_argument('--dstore_mmap', type=str, help='location of datastore')
 
 args = parser.parse_args()
 print(args)
@@ -50,6 +53,28 @@ def merge_all(faiss_index, num_shards):
     print(f'took {end - start} s')
 
 
-if __name__ == '__main__':
-    merge_all(args.faiss_index, args.num_shards)
+def concatenate_vals(dstore_mmap, num_shards):
+    f = open('dstore_sizes.txt', 'r')
+    dstore_sizes = dict()
+    for line in f:
+        tokens = line.split(' ')
+        dstore_sizes[int(tokens[0])] = int(tokens[1])
+    f.close()
 
+    dstore_size = sum(dstore_sizes.values())
+    vals = np.memmap(dstore_mmap+'_vals.npy', dtype=np.int, mode='w+', shape=(dstore_size, 1))
+    curr_position = 0
+    for idx in range(num_shards):
+        split_path = os.path.split(dstore_mmap)
+        curr_dstore_mmap = os.path.join(split_path[0], str(idx), split_path[1])
+        if os.path.exists(curr_dstore_mmap+'_vals.npy'):
+            intermediate_vals = np.memmap(curr_dstore_mmap+'_vals.npy', dtype=np.int, mode='r', shape=(dstore_sizes[idx], 1))
+            vals[curr_position:curr_position + dstore_sizes[idx], :] = intermediate_vals
+            curr_position += dstore_sizes[idx]
+
+            #os.remove(curr_dstore_mmap+'_vals.npy') # remove intermediate vals once finished concatenating
+
+
+if __name__ == '__main__':
+    #merge_all(args.faiss_index, args.num_shards)
+    concatenate_vals(args.dstore_mmap, args.num_shards)

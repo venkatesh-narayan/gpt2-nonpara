@@ -9,9 +9,9 @@
 
 #SBATCH --output=slurm_output/run_in_parallel-%A_%a.out
 #SBATCH --error=slurm_output/run_in_parallel-%A_%a.err
-#SBATCH --array=0-19%7
-#SBATCH --gres=gpu:A6000:1
-#SBATCH --mem=30g
+#SBATCH --array=0-18%7
+##SBATCH --gres=gpu:A6000:1
+#SBATCH --mem=15g
 #SBATCH -t 0
 
 taskid=${SLURM_ARRAY_TASK_ID}

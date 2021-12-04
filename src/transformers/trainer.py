@@ -1878,7 +1878,6 @@ class Trainer:
                             shape = [model.knnlm_args.dstore_size - self.dstore_idx]
                             dkeys = dkeys[:shape[0]]
 
-
                         # sanity check
                         assert shape[0] == len(stripped_labels)
 

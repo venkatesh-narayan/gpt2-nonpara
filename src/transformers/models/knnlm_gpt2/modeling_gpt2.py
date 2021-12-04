@@ -889,9 +889,6 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
             faiss_path = self.knnlm_args.faiss_index
             if faiss_path is None:
                 raise ValueError("provide faiss index path")
-            else:
-                if not os.path.exists(faiss_path + '.trained'):
-                    raise ValueError("no trained faiss index!")
 
             # at this point, we should be able to make KNN_Dstore
             self.knn_dstore = KNN_Dstore(self.knnlm_args,
@@ -990,7 +987,7 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
 
         knnlm_args.knn_keytype           = getattr(knnlm_args, 'knn_keytype', 'last_ffn_input')
         knnlm_args.dstore_fp16           = getattr(knnlm_args, 'dstore_fp16', True)
-        knnlm_args.lmbda                 = getattr(knnlm_args, 'lmbda', 0.25)
+        knnlm_args.lmbda                 = getattr(knnlm_args, 'lmbda', self.config.lmbda)
         knnlm_args.tokens_per_sample     = getattr(knnlm_args, 'tokens_per_sample', self.config.stride)
 
         return knnlm_args

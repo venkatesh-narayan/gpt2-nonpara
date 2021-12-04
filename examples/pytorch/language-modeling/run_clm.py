@@ -79,8 +79,16 @@ class KnnArguments:
         default=None, metadata={"help": "dstore mmap location"}
     )
 
+    dstore_size: Optional[int] = field(
+        default=0, metadata={"help": "size of dstore"}
+    )
+
     faiss_index: Optional[str] = field(
         default=None, metadata={"help": "faiss_index location"}
+    )
+
+    lmbda: Optional[float] = field(
+        default=0.25, metadata={"help": "knn interpolation coefficient"}
     )
 
 
@@ -383,6 +391,9 @@ def main():
     for k, v in vars(knn_args).items():
         setattr(config, k, v)
 
+    stride = min(tokenizer.model_max_length, data_args.stride) # for sliding window context
+    config.stride = stride
+
     # change model from auto to knnlmgpt2
     if model_args.model_name_or_path:
         if knn_args.is_knnlm_model:
@@ -427,7 +438,6 @@ def main():
     # since this will be pickled to avoid _LazyModule error in Hasher force logger loading before tokenize_function
     tok_logger = transformers.utils.logging.get_logger("transformers.tokenization_utils_base")
 
-    stride = min(tokenizer.model_max_length, data_args.stride) # for sliding window context
     max_length = model.config.n_positions # default max len
 
     #tokenizer.add_special_tokens({'pad_token': "[PAD]"})

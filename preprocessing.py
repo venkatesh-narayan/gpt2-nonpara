@@ -26,6 +26,9 @@ parser.add_argument('--num_shards', type=int, default=20, help='number of shards
 args = parser.parse_args()
 print(args)
 
+def chunk_and_shuffle(full_text):
+    pass
+
 def dataset_to_txt(out_path, dataset_name, config, split, num_shards):
     if num_shards <= 0:
         raise ValueError('need a positive number of shards')

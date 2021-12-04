@@ -39,8 +39,6 @@ parser.add_argument('--idx', type=int, help='current shard index')
 
 parser.add_argument('--lmbda', type=float, default=0.25, help='knn interpolation coefficient')
 parser.add_argument('--dstore_mmap', type=str, help='memmap where keys and vals are stored')
-#parser.add_argument('--dstore_size', type=int, help='number of items saved in the datastore memmap')
-#parser.add_argument('--dimension', type=int, default=1024, help='Size of each key')
 parser.add_argument('--dstore_fp16', default=False, action='store_true')
 parser.add_argument('--seed', type=int, default=1, help='random seed for sampling the subset of vectors to train the cache')
 parser.add_argument('--ncentroids', type=int, default=4096, help='number of centroids faiss should learn')
@@ -66,15 +64,20 @@ config = AutoConfig.from_pretrained(args.model_name_or_path,
 args.dimension = config.n_embd
 training_args = TrainingArguments("test_trainer", evaluation_strategy="epoch", per_device_eval_batch_size=1)
 
-def get_dstore_size(txt_path):
+def get_dstore_size(txt_path, idx):
     f = open(txt_path, 'r')
     encodings = tokenizer('\n'.join([line for line in f]))
     f.close()
+
+    f = open('dstore_sizes.txt', 'a')
+    f.write(str(idx) + ' ' + str(len(encodings['input_ids'])) + '\n') # when parallelizing, need to know which index has which dstore size
+    f.close()
+
     return len(encodings['input_ids'])
 
 print('********** inferring datastore size (this could take some time for larger datasets) **********')
 start_time = time.time()
-args.dstore_size = get_dstore_size(args.txt_path)
+args.dstore_size = get_dstore_size(args.txt_path, args.idx)
 end_time = time.time()
 print(f'took {end_time - start_time} s')
 
@@ -89,34 +92,6 @@ def tokenize_function(examples):
             "^^^^^^^^^^^^^^^^ Please ignore the warning above - this long input will be chunked into smaller bits before being passed to the model."
         )
     return output
-
-def chunk_and_shuffle(examples):
-    concatenated_examples = { k: [] for k in examples.keys() }
-    for k in examples.keys():
-        for arr in examples[k]:
-            concatenated_examples[k].extend(arr)
-
-    total_length = len(concatenated_examples['input_ids'])
-
-    # split into chunks of size chunk_size; note that chunk_size is
-    # an arbitrary definition of how long a passage is
-    chunks = {}
-    for k, v in concatenated_examples.items():
-        v = torch.Tensor(v)
-        # number of chunks = total_length // chunk_size + 1
-        v_chunks = v.chunk(total_length // args.chunk_size + 1, dim=0)
-        if v_chunks[-1].size(0) != args.chunk_size:
-            v_chunks = v_chunks[:-1]
-        print(v_chunks)
-        chunks[k] = torch.stack(v_chunks)
-
-    # shuffle rows by generating random permutation of [0, ..., number of chunks]
-    shuffling_pattern = torch.randperm(chunks['input_ids'].size(0))
-    for k, v in chunks.items():
-        chunks[k] = v[shuffling_pattern]
-        chunks[k] = chunks[k].numpy() # convert back to numpy in the end -- for map
-
-    return chunks
 
 def prepare_shard(chunks):
     # apply group_text logic here
@@ -171,14 +146,10 @@ def prepare_dataset(txt_path):
                                         batched=True,
                                         remove_columns=raw_dataset['train'].column_names,
                                         desc="running tokenizer on dataset")
-    chunked_dataset = tokenized_dataset.map(chunk_and_shuffle,
+    sharded_dataset = tokenized_dataset.map(prepare_shard,
                                             batched=True,
                                             remove_columns=tokenized_dataset['train'].column_names,
-                                            desc="chunking and shuffling dataset")
-    sharded_dataset = chunked_dataset.map(prepare_shard,
-                                          batched=True,
-                                          remove_columns=chunked_dataset['train'].column_names,
-                                          desc="grouping chunks into shard")
+                                            desc="grouping chunks into shard")
     return sharded_dataset
 
 def save_datastore_for_shard(sharded_dataset, curr_dstore_mmap):
@@ -220,7 +191,7 @@ def save_datastore_for_shard(sharded_dataset, curr_dstore_mmap):
     metrics["perplexity"] = perplexity
 
     trainer.log_metrics("eval", metrics)
-    trainer.save_metrics("eval", metrics)
+    #trainer.save_metrics("eval", metrics)
 
 
 def build_faiss_index(sharded_dataset):
@@ -288,10 +259,10 @@ def build_faiss_index(sharded_dataset):
     print('Writing index took {} s'.format(time.time() - start))
     print()
 
-    #os.remove(curr_dstore_mmap + '_keys.npy') # remove keys after adding to faiss index
+    os.remove(curr_dstore_mmap + '_keys.npy') # remove keys after adding to faiss index
 
 
-if __name__ == '__main__':
-    sharded_dataset = prepare_dataset(args.txt_path)
-    build_faiss_index(sharded_dataset)
+#if __name__ == '__main__':
+    #sharded_dataset = prepare_dataset(args.txt_path)
+    #build_faiss_index(sharded_dataset)
 
