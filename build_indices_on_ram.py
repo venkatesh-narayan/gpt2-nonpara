@@ -65,15 +65,28 @@ args.dimension = config.n_embd
 training_args = TrainingArguments("test_trainer", evaluation_strategy="epoch", per_device_eval_batch_size=1)
 
 def get_dstore_size(txt_path, idx):
-    f = open(txt_path, 'r')
-    encodings = tokenizer('\n'.join([line for line in f]))
-    f.close()
+    if not os.path.exists('dstore_sizes.txt'):
+        f = open(txt_path, 'r')
+        encodings = tokenizer('\n'.join([line for line in f]))
+        f.close()
 
-    f = open('dstore_sizes.txt', 'a')
-    f.write(str(idx) + ' ' + str(len(encodings['input_ids'])) + '\n') # when parallelizing, need to know which index has which dstore size
-    f.close()
+        f = open('dstore_sizes.txt', 'a')
+        f.write(str(idx) + ' ' + str(len(encodings['input_ids'])) + '\n') # when parallelizing, need to know which index has which dstore size
+        f.close()
 
-    return len(encodings['input_ids'])
+        return len(encodings['input_ids'])
+    else:
+        f = open('dstore_sizes.txt', 'r')
+        size = 0
+        for line in f:
+            tokens = line.split(' ')
+            if int(tokens[0]) == idx:
+                size = int(tokens[1])
+                break
+
+        f.close()
+
+        return size
 
 print('********** inferring datastore size (this could take some time for larger datasets) **********')
 start_time = time.time()
@@ -194,7 +207,7 @@ def save_datastore_for_shard(sharded_dataset, curr_dstore_mmap):
     #trainer.save_metrics("eval", metrics)
 
 
-def build_faiss_index(sharded_dataset):
+def build_faiss_index(sharded_dataset, flag):
     print(f'SANITY CHECK: TXT PATH IS {args.txt_path} AND IDX IS {args.idx}')
     idx = args.idx
 
@@ -204,7 +217,7 @@ def build_faiss_index(sharded_dataset):
         os.makedirs(path_to_check, exist_ok=True)
 
     curr_dstore_mmap = os.path.join(path_to_check, split_path[1])
-    save_datastore_for_shard(sharded_dataset, curr_dstore_mmap)
+    if flag: save_datastore_for_shard(sharded_dataset, curr_dstore_mmap)
 
     if args.dstore_fp16:
         keys = np.memmap(curr_dstore_mmap+'_keys.npy', dtype=np.float16, mode='r', shape=(args.dstore_size, args.dimension))

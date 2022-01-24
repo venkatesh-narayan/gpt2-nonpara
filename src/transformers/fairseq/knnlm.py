@@ -28,7 +28,7 @@ class KNN_Dstore(object):
             raise ValueError('Cannot build a datastore without the data.')
 
         start = time.time()
-        index = faiss.read_index(args.indexfile, faiss.IO_FLAG_ONDISK_SAME_DIR)
+        index = faiss.read_index(args.indexfile)#, faiss.IO_FLAG_ONDISK_SAME_DIR)
         print('Reading datastore took {} s'.format(time.time() - start))
 
         #print('gpu faiss index')
