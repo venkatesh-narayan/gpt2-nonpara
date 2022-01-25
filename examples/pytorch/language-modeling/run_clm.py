@@ -384,8 +384,8 @@ def main():
         )
 
     # pass tokenizer for debug purpose
-    # config.tokenizer = tokenizer
-    config.tokenizer = None
+    config.tokenizer = tokenizer
+    # config.tokenizer = None
 
     # put generation args into config
     for k, v in vars(knn_args).items():
