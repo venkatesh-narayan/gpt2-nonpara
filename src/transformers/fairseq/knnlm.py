@@ -116,7 +116,6 @@ class KNN_Dstore(object):
         start_knn = time.time()
         dists, knns = self.get_knns(queries[src != pad_idx])
         end_knn = time.time()
-
         # print(f'got dists and knns in {end_knn - start_knn} seconds')
 
         # (T_reducedxB)xK

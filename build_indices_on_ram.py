@@ -9,6 +9,7 @@
 import os
 import time
 import math
+import collections
 import argparse
 
 import torch
@@ -64,35 +65,22 @@ config = AutoConfig.from_pretrained(args.model_name_or_path,
 args.dimension = config.n_embd
 training_args = TrainingArguments("test_trainer", evaluation_strategy="epoch", per_device_eval_batch_size=1)
 
-def get_dstore_size(txt_path, idx):
+def get_dstore_sizes():
     if not os.path.exists('dstore_sizes.txt'):
-        f = open(txt_path, 'r')
-        encodings = tokenizer('\n'.join([line for line in f]))
-        f.close()
-
-        f = open('dstore_sizes.txt', 'a')
-        f.write(str(idx) + ' ' + str(len(encodings['input_ids'])) + '\n') # when parallelizing, need to know which index has which dstore size
-        f.close()
-
-        return len(encodings['input_ids'])
+        raise ValueError('cannot build indices without knowing dstore sizes!')
     else:
         f = open('dstore_sizes.txt', 'r')
-        size = 0
+        sizes = {}
         for line in f:
             tokens = line.split(' ')
-            if int(tokens[0]) == idx:
-                size = int(tokens[1])
-                break
+            sizes[int(tokens[0])] = int(tokens[1])
 
         f.close()
 
-        return size
+        return sizes
 
-print('********** inferring datastore size (this could take some time for larger datasets) **********')
-start_time = time.time()
-args.dstore_size = get_dstore_size(args.txt_path, args.idx)
-end_time = time.time()
-print(f'took {end_time - start_time} s')
+dstore_sizes = collections.OrderedDict(sorted(get_dstore_sizes().items()))  # order them so that we can get the correct values to use for the offset of key ids
+args.dstore_size = dstore_sizes[args.idx]
 
 print(args)
 
@@ -210,6 +198,9 @@ def save_datastore_for_shard(sharded_dataset, curr_dstore_mmap):
 def build_faiss_index(sharded_dataset, flag):
     print(f'SANITY CHECK: TXT PATH IS {args.txt_path} AND IDX IS {args.idx}')
     idx = args.idx
+    offset = sum(list(dstore_sizes.values())[:idx]) # these are ordered so should be correct
+    print('DSTORE SIZES: ', dstore_sizes)
+    print('OFFSET: ', offset)
 
     split_path = os.path.split(args.dstore_mmap)
     path_to_check = os.path.join(split_path[0], str(idx))
@@ -217,7 +208,8 @@ def build_faiss_index(sharded_dataset, flag):
         os.makedirs(path_to_check, exist_ok=True)
 
     curr_dstore_mmap = os.path.join(path_to_check, split_path[1])
-    if flag: save_datastore_for_shard(sharded_dataset, curr_dstore_mmap)
+    if flag:
+        save_datastore_for_shard(sharded_dataset, curr_dstore_mmap)
 
     if args.dstore_fp16:
         keys = np.memmap(curr_dstore_mmap+'_keys.npy', dtype=np.float16, mode='r', shape=(args.dstore_size, args.dimension))
@@ -255,7 +247,7 @@ def build_faiss_index(sharded_dataset, flag):
     while start < args.dstore_size:
         end = min(args.dstore_size, start + args.num_keys_to_add_at_a_time)
         to_add = keys[start:end].copy()
-        index.add_with_ids(to_add.astype(np.float32), np.arange(start, end))
+        index.add_with_ids(to_add.astype(np.float32), np.arange(start + offset, end + offset))
         start += args.num_keys_to_add_at_a_time
 
         if start % 1000000 == 0:
@@ -275,7 +267,7 @@ def build_faiss_index(sharded_dataset, flag):
     os.remove(curr_dstore_mmap + '_keys.npy') # remove keys after adding to faiss index
 
 
-#if __name__ == '__main__':
-    #sharded_dataset = prepare_dataset(args.txt_path)
-    #build_faiss_index(sharded_dataset)
+if __name__ == '__main__':
+    sharded_dataset = prepare_dataset(args.txt_path)
+    build_faiss_index(sharded_dataset, True) # already saved the datastores so flag is false; change to true to save
 

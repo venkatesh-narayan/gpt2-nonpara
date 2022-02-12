@@ -72,9 +72,9 @@ def concatenate_vals(dstore_mmap, num_shards):
             vals[curr_position:curr_position + dstore_sizes[idx], :] = intermediate_vals
             curr_position += dstore_sizes[idx]
 
-            #os.remove(curr_dstore_mmap+'_vals.npy') # remove intermediate vals once finished concatenating
+            os.remove(curr_dstore_mmap+'_vals.npy') # remove intermediate vals once finished concatenating
 
 
 if __name__ == '__main__':
-    #merge_all(args.faiss_index, args.num_shards)
+    merge_all(args.faiss_index, args.num_shards)
     concatenate_vals(args.dstore_mmap, args.num_shards)

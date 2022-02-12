@@ -1897,7 +1897,6 @@ class Trainer:
                     else:
                         print('Skipping this one with shape', shape)
 
-
         # Save past state if it exists
         # TODO: this needs to be fixed and made cleaner later.
         if self.args.past_index >= 0:

@@ -1,25 +1,22 @@
 #! /bin/bash
 #
-# run_in_parallel.sh
-# Copyright (C) 2021-11-20 Junxian <He>
+# make_trained_index.sh
+# Copyright (C) 2022-02-10 Junxian <He>
 #
 # Distributed under terms of the MIT license.
 #
 
 
-#SBATCH --output=slurm_output/run_in_parallel-%A_%a.out
-#SBATCH --error=slurm_output/run_in_parallel-%A_%a.err
-#SBATCH --array=1-18%7
+#SBATCH --output=slurm_output/make_trained_index.out
+#SBATCH --error=slurm_output/make_trained_index.err
 #SBATCH --gres=gpu:A6000:1
 #SBATCH --mem=15g
 #SBATCH -t 0
 
-taskid=${SLURM_ARRAY_TASK_ID}
-
 python3 build_indices_on_ram.py \
-    --txt_path wikitext_saves/dataset_train${taskid}.txt \
+    --txt_path wikitext_saves/dataset_train0.txt \
     --model_name_or_path gpt2 \
-    --idx ${taskid} \
+    --idx 0 \
     --dstore_mmap test_preprocessing/stride_512/dstore \
     --faiss_index test_preprocessing/stride_512/knn.index \
     --starting_point 0 \
