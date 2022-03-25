@@ -23,76 +23,90 @@ import gc
 
 num_gpus = faiss.get_num_gpus()
 
-def search(query, shard_number, k):
-    print('currently on: ', shard_number)
-
+def set_up_faiss(num_shards):
+    indexes = []
     # reading all the indices at the same time causes script to be killed; instead,
     # we can just read the index here and then delete it after using it
-    index = faiss.read_index(f'webtext/stride_512/knn{shard_number}.index')
-    print(f'\tdone reading index {shard_number}')
+    for shard_number in range(num_shards):
+        index = faiss.read_index(f'webtext/stride_512/knn{shard_number}.index')
+        print(f'\tdone reading index {shard_number}')
 
-    # initialize resources and options
-    # it did say in the faiss wiki that gpu indices are not thread safe because
-    # it uses temp gpu memory or something -- could this be causing issues?
-    # maybe can just set tempmem to 0 to avoid that?
-    # see https://github.com/facebookresearch/faiss/wiki/Threads-and-asynchronous-calls
-    res = faiss.StandardGpuResources()
-    res.setTempMemory(0)
+        # initialize resources and options
+        # it did say in the faiss wiki that gpu indices are not thread safe because
+        # it uses temp gpu memory or something -- could this be causing issues?
+        # maybe can just set tempmem to 0 to avoid that?
+        # see https://github.com/facebookresearch/faiss/wiki/Threads-and-asynchronous-calls
+        res = faiss.StandardGpuResources()
+        res.setTempMemory(0)
 
-    co = faiss.GpuClonerOptions()
-    co.useFloat16 = True
-    co.indicesOptions = faiss.INDICES_CPU
-    print(f'\tmade resources and options for {shard_number}')
+        co = faiss.GpuClonerOptions()
+        co.useFloat16 = True
+        co.indicesOptions = faiss.INDICES_CPU
+        print(f'\tmade resources and options for {shard_number}')
 
-    # due to threading, i don't think this guarantees i'll search one thing on one gpu
-    # but that might be ok
-    device = shard_number % num_gpus
-    index = faiss.index_cpu_to_gpu(res, device, index, co)
-    print(f'\tput index {shard_number} on gpu {device}')
+        # due to threading, i don't think this guarantees i'll search one thing on one gpu
+        # but that might be ok
+        device = shard_number % num_gpus
+        index = faiss.index_cpu_to_gpu(res, device, index, co)
+
+        print(f'\tput index {shard_number} on gpu {device}')
+
+        indexes.append(index)
+
+    return indexes
+
+
+def search(index, query, shard_number, k):
+    print('currently on: ', shard_number)
 
     dists, knns = index.search(query.detach().cpu().float().numpy(), k)
     print(f'\tdone searching shard number {shard_number}')
 
     # delete after finished using to save memory
-    del index
-    del res
-    del co
-    gc.collect()
+    # del index
+    # del res
+    # del co
+    # gc.collect()
 
     return torch.from_numpy(dists).cpu(), torch.from_numpy(knns).cpu()
 
-def parallel_search_over_chunks(query, k, num_shards):
+def parallel_search_over_chunks(indexes, query, k, num_shards):
+    import pdb; pdb.set_trace()
     dists, knns = torch.empty((1, 1)), torch.empty((1, 1)) # initialize dists and knns to empty tensors
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=num_gpus) as executor:
-        all_futures = [executor.submit(search, query, i, k) for i in range(num_shards)]
-        for future in concurrent.futures.as_completed(all_futures):
-            i_dists, i_knns = future.result()
-            print(i_dists)
+        all_futures = [executor.submit(search, indexes[i], query, i, k) for i in range(num_shards)]
 
-            # in the beginning, there's nothing to cat; just want to set the variables
-            # this is a better base case than enumerating over the futures and doing
-            # something like "`if i == 0`" because for the first `max_workers` threads,
-            # `i` will be 0, so there can be a chance for overwriting
-            if dists.shape == (1, 1) and knns.shape == (1, 1):
-                dists, knns = copy.deepcopy(i_dists), copy.deepcopy(i_knns)
-                print('\t\tSETTING INITIAL DISTS AND KNNS')
-            else:
-                # to save memory, i can just find the top `k` dists at every instance
-                # `dim = 1` because second dimension of the output of `index.search` corresponds to `k` nearest neighbors,
-                # so want to add column-wise
-                dists, knns = torch.cat((dists, i_dists), dim=1), torch.cat((knns, i_knns), dim=1)
+    import pdb; pdb.set_trace()
 
-                # sort the `dists` and then get the top `k` of them; then, using the indices that we got from
-                # sorting the `dists`, sort `knns` using that, and then take the top `k` of `knns`
-                # here, `dim = 1` to sort by rows
-                sorted_dists, indices = torch.sort(dists, dim=1, descending=True)
-                dists = sorted_dists[:, :k]
-                knns = torch.gather(knns, 1, indices) # sort knns row-wise by indices
-                knns = knns[:, :k]
+    for future in concurrent.futures.as_completed(all_futures):
+        i_dists, i_knns = future.result()
+        print(i_dists)
 
-                print('\t\tSORTED DISTS AND TOOK TOP K')
+        # in the beginning, there's nothing to cat; just want to set the variables
+        # this is a better base case than enumerating over the futures and doing
+        # something like "`if i == 0`" because for the first `max_workers` threads,
+        # `i` will be 0, so there can be a chance for overwriting
+        if dists.shape == (1, 1) and knns.shape == (1, 1):
+            dists, knns = copy.deepcopy(i_dists), copy.deepcopy(i_knns)
+            print('\t\tSETTING INITIAL DISTS AND KNNS')
+        else:
+            # to save memory, i can just find the top `k` dists at every instance
+            # `dim = 1` because second dimension of the output of `index.search` corresponds to `k` nearest neighbors,
+            # so want to add column-wise
+            dists, knns = torch.cat((dists, i_dists), dim=1), torch.cat((knns, i_knns), dim=1)
 
-            print(f'\t\t{dists.shape}, {knns.shape}')
+            # sort the `dists` and then get the top `k` of them; then, using the indices that we got from
+            # sorting the `dists`, sort `knns` using that, and then take the top `k` of `knns`
+            # here, `dim = 1` to sort by rows
+            sorted_dists, indices = torch.sort(dists, dim=1, descending=True)
+            dists = sorted_dists[:, :k]
+            knns = torch.gather(knns, 1, indices) # sort knns row-wise by indices
+            knns = knns[:, :k]
+
+            print('\t\tSORTED DISTS AND TOOK TOP K')
+
+        print(f'\t\t{dists.shape}, {knns.shape}')
 
         # not sure if this saves a lot of memory but doing it just in case
         del all_futures
@@ -107,7 +121,9 @@ if not os.path.exists(f'test_query{seed}.pt'):
 else:
     x = torch.load(f'test_query{seed}.pt')
 
-dists, knns = parallel_search_over_chunks(x, 1024, 20)
+indexes = set_up_faiss(20)
+
+dists, knns = parallel_search_over_chunks(indexes, x, 1024, 20)
 
 # below is for sanity check; i'm running the same query over the
 # datastore with 10% of webtext (20 shards), so it should find
