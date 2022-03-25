@@ -30,6 +30,7 @@ tokenizer = GPT2Tokenizer.from_pretrained(args.model_name_or_path,
 def get_dstore_sizes(path):
     fnames = [p for p in os.listdir(path) if '.txt' in p] # include only text files from path
     fnames = [os.path.join(path, p) for p in fnames]
+    fnames.sort(key=lambda f: int(''.join(filter(str.isdigit, f))))
     f = open('dstore_sizes.txt', 'w')
     for idx, fname in enumerate(fnames):
         curr_file = open(fname, 'r')

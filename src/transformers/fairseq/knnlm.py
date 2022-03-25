@@ -20,8 +20,32 @@ class KNN_Dstore(object):
         self.vocab_size = vocab_size
         self.tokenizer = tokenizer
 
+        # adding support for multiple gpus
+        self.num_gpus = faiss.get_num_gpus()
+
         self.index = self.setup_faiss(args)
 
+    # taken from faiss benchs/bench_gpu_1bn.py
+    # note here that the default i0 is 1 because id 0 is already taken up for the hf model
+    def make_vres_vdev(self, i0=1, i1=-1):
+        "return vectors of device ids and resources useful for gpu_multiple"
+        gpu_resources = []
+        for i in range(self.num_gpus):
+            res = faiss.StandardGpuResources()
+            res.setTempMemory(int(6e9))
+            gpu_resources.append(res)
+
+        vres = faiss.GpuResourcesVector()
+        vdev = faiss.IntVector()
+
+        if i1 == -1:
+            i1 = self.num_gpus
+
+        for i in range(i0, i1):
+            vdev.push_back(i)
+            vres.push_back(gpu_resources[i])
+
+        return vres, vdev, gpu_resources
 
     def setup_faiss(self, args):
         if not args.dstore_filename:
@@ -31,11 +55,22 @@ class KNN_Dstore(object):
         index = faiss.read_index(args.indexfile)#, faiss.IO_FLAG_ONDISK_SAME_DIR)
         print('Reading datastore took {} s'.format(time.time() - start))
 
-        #print('gpu faiss index')
-        co = faiss.GpuClonerOptions()
+        print('gpu faiss index')
+        #co = faiss.GpuClonerOptions()
+        #co.useFloat16 = True
+        #res = faiss.StandardGpuResources()
+        #index = faiss.index_cpu_to_gpu(res, 0, index, co)
+
+        co = faiss.GpuMultipleClonerOptions()
         co.useFloat16 = True
-        res = faiss.StandardGpuResources()
-        index = faiss.index_cpu_to_gpu(res, 0, index, co)
+        co.verbose = True
+        co.indicesOptions = faiss.INDICES_CPU
+        co.shard = True # builds IndexShards, which splits dataset over gpus (handles larger datasets)
+
+        vres, vdev, resources = self.make_vres_vdev(0, -1)
+        index = faiss.index_cpu_to_gpu_multiple(vres, vdev, index, co)
+        index.referenced_objects = resources
+        print('index sharded on multiple gpus')
 
         index.nprobe = args.probe
 
@@ -76,7 +111,25 @@ class KNN_Dstore(object):
     def get_knns(self, queries):
         start = time.time()
         #import pdb; pdb.set_trace()
-        dists, knns = self.index.search(queries.detach().cpu().float().numpy(), self.k)
+
+        # "chunk" queries into smaller queries (along the first dimension) so that
+        # for larger datasets, index.search can still work; 8 is an arbitrary number
+        num_chunks = 1000
+        chunk_size = queries.shape[0] // num_chunks
+
+        #import pdb; pdb.set_trace()
+
+        dists, knns = self.index.search(queries[:chunk_size, :].detach().cpu().float().numpy(), self.k) # first chunk
+        for i in range(1, num_chunks + 1):
+            # boundary condition; we only have to go to i = num_chunks when there's not an even divide
+            if i == num_chunks and queries.shape[0] % num_chunks == 0:
+                break
+
+            start, end = i * chunk_size, min((i + 1) * chunk_size, queries.shape[0])
+            next_dists, next_knns = self.index.search(queries[start:end, :].detach().cpu().float().numpy(), self.k)
+            dists, knns = torch.cat((dists, next_dists), dim=0), torch.cat((knns, next_knns), dim=0) # cat on first dim
+
+        #dists, knns = self.index.search(queries.detach().cpu().float().numpy(), self.k)
         return dists, knns
 
 

@@ -79,8 +79,10 @@ def get_dstore_sizes():
 
         return sizes
 
+print('getting dstore size...')
 dstore_sizes = collections.OrderedDict(sorted(get_dstore_sizes().items()))  # order them so that we can get the correct values to use for the offset of key ids
 args.dstore_size = dstore_sizes[args.idx]
+print('got it')
 
 print(args)
 

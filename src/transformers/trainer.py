@@ -958,7 +958,11 @@ class Trainer:
 
         # Multi-gpu training (should be after apex fp16 initialization)
         if self.args.n_gpu > 1:
-            model = nn.DataParallel(model)
+            # ADDED "if training" FOR KNNLM; only doing evaluation, so there's no point in using dataparallel
+            # easier to have multiple gpus, so that some can be used to split for faiss index search/retrieval,
+            # but still only use one gpu for the model
+            if training:
+                model = nn.DataParallel(model)
 
         # Note: in torch.distributed mode, there's no point in wrapping the model
         # inside a DistributedDataParallel as we'll be under `no_grad` anyways.

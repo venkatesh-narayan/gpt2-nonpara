@@ -1167,6 +1167,7 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
             output = (lm_logits,) + transformer_outputs[1:]
             return ((loss,) + output) if loss is not None else output
 
+        # import pdb; pdb.set_trace()
         return CausalLMOutputWithCrossAttentions(
             loss=loss,
             logits=lm_logits,

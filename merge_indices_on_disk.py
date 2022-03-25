@@ -21,11 +21,13 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--num_shards', type=int, default=20, help='number of shards created')
 parser.add_argument('--faiss_index', type=str, help='file to write the faiss index')
 parser.add_argument('--dstore_mmap', type=str, help='location of datastore')
+parser.add_argument('--dstore_out_path', type=str, help='location to write dstore files')
+parser.add_argument('--faiss_out_path', type=str, help='location to write faiss files')
 
 args = parser.parse_args()
 print(args)
 
-def merge_all(faiss_index, num_shards):
+def merge_all(faiss_index, num_shards, out_path):
     # by this point, all the indices should have been written
     print('********** LOADING TRAINED INDEX **********')
     start = time.time()
@@ -40,20 +42,22 @@ def merge_all(faiss_index, num_shards):
 
     print('********** MERGING ON DISK **********')
     start = time.time()
-    merge_ondisk(index, index_names, faiss_index + '.ivfdata')
+    merge_ondisk(index, index_names, out_path + '.ivfdata')
     end = time.time()
     print('********** FINISHED MERGING ON DISK **********')
     print(f'took {end - start} s')
 
     print('********** WRITING INDEX **********')
     start = time.time()
+
+    split_ext = os.path.splitext(out_path)
     faiss.write_index(index, split_ext[0] + '_disk' + split_ext[1])
     end = time.time()
     print('********** FINISHED WRITING INDEX **********')
     print(f'took {end - start} s')
 
 
-def concatenate_vals(dstore_mmap, num_shards):
+def concatenate_vals(dstore_mmap, num_shards, out_path):
     f = open('dstore_sizes.txt', 'r')
     dstore_sizes = dict()
     for line in f:
@@ -62,7 +66,7 @@ def concatenate_vals(dstore_mmap, num_shards):
     f.close()
 
     dstore_size = sum(dstore_sizes.values())
-    vals = np.memmap(dstore_mmap+'_vals.npy', dtype=np.int, mode='w+', shape=(dstore_size, 1))
+    vals = np.memmap(out_path+'_vals.npy', dtype=np.int, mode='w+', shape=(dstore_size, 1))
     curr_position = 0
     for idx in range(num_shards):
         split_path = os.path.split(dstore_mmap)
@@ -72,9 +76,9 @@ def concatenate_vals(dstore_mmap, num_shards):
             vals[curr_position:curr_position + dstore_sizes[idx], :] = intermediate_vals
             curr_position += dstore_sizes[idx]
 
-            os.remove(curr_dstore_mmap+'_vals.npy') # remove intermediate vals once finished concatenating
+            #os.remove(curr_dstore_mmap+'_vals.npy') # remove intermediate vals once finished concatenating
 
 
 if __name__ == '__main__':
-    merge_all(args.faiss_index, args.num_shards)
-    concatenate_vals(args.dstore_mmap, args.num_shards)
+    merge_all(args.faiss_index, args.num_shards, args.faiss_out_path)
+    concatenate_vals(args.dstore_mmap, args.num_shards, args.dstore_out_path)

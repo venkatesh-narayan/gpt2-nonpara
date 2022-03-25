@@ -9,15 +9,16 @@
 
 #SBATCH --output=slurm_output/make_trained_index.out
 #SBATCH --error=slurm_output/make_trained_index.err
-#SBATCH --gres=gpu:A6000:1
-#SBATCH --mem=15g
+#SBATCH --gres=gpu:3090:1
+#SBATCH --mem=60g
+#SBATCH --cpus-per-task=16
 #SBATCH -t 0
 
 python3 build_indices_on_ram.py \
-    --txt_path wikitext_saves/dataset_train0.txt \
-    --model_name_or_path gpt2 \
+    --txt_path fixed_webtext_saves/fixed_dataset_train0.txt \
+    --model_name_or_path gpt2-large \
     --idx 0 \
-    --dstore_mmap test_preprocessing/stride_512/dstore \
-    --faiss_index test_preprocessing/stride_512/knn.index \
+    --dstore_mmap webtext/stride_512/dstore \
+    --faiss_index webtext/stride_512/knn.index \
     --starting_point 0 \
     --dstore_fp16
