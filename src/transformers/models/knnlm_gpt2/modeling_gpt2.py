@@ -1157,6 +1157,7 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
             lm_logits = self.combine_knn_and_vocab_probs(knn_probs, lm_logits, self.knnlm_args.lmbda)
 
         loss = None
+        full_loss = None
         if labels is not None:
             # Shift so that tokens < n predict n
             shift_logits = lm_logits[..., :-1, :].contiguous()
@@ -1172,7 +1173,7 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
             loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
             loss = loss.view(*size_t)
 
-            lm_logits = loss.detach()
+            full_loss = loss.detach()
 
             padding_mask = shift_labels.eq(-100)
             loss.masked_fill_(padding_mask, 0.0)
@@ -1205,7 +1206,8 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
             hidden_states=transformer_outputs.hidden_states,
             attentions=transformer_outputs.attentions,
             cross_attentions=transformer_outputs.cross_attentions,
-            knn_emb=knn_emb
+            knn_emb=knn_emb if self.knnlm_args.save_knnlm_dstore else None,
+            full_loss=full_loss,
         )
 
     @staticmethod

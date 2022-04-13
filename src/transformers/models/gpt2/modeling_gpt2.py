@@ -985,7 +985,7 @@ class GPT2LMHeadModel(GPT2PreTrainedModel):
             loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
             loss = loss.view(*size_t)
 
-            lm_logits = loss.detach()
+            full_loss = loss.detach()
 
             padding_mask = shift_labels.eq(-100)
             loss.masked_fill_(padding_mask, 0.0)
@@ -1017,6 +1017,7 @@ class GPT2LMHeadModel(GPT2PreTrainedModel):
             hidden_states=transformer_outputs.hidden_states,
             attentions=transformer_outputs.attentions,
             cross_attentions=transformer_outputs.cross_attentions,
+            full_loss=full_loss,
         )
 
     @staticmethod

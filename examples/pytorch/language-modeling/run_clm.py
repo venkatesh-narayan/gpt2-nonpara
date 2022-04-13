@@ -420,6 +420,9 @@ def main():
     stride = min(tokenizer.model_max_length, data_args.stride) # for sliding window context
     config.stride = stride
 
+    # save memory
+    config.keys_to_ignore_at_inference = "logits"
+
     # change model from auto to knnlmgpt2
     if model_args.model_name_or_path:
         if knn_args.is_knnlm_model:
@@ -625,6 +628,10 @@ def main():
 
         res = {}
         eval_preds, eval_labels = eval_preds.predictions, eval_preds.label_ids
+
+        if isinstance(eval_preds, tuple):
+            eval_preds = eval_preds[-1] 
+
         num_token_list = [get_num_tokens(x) for x in eval_labels]
         res['real_ppl'] = math.exp(eval_preds.sum() / sum(num_token_list))
 
