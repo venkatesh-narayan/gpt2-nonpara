@@ -3,6 +3,9 @@ import torch.nn.functional as F
 import faiss
 import math
 import numpy as np
+import os
+import concurrent.futures
+import gc
 #from fairseq import utils
 import time
 #from fairseq.data import Dictionary
@@ -21,58 +24,70 @@ class KNN_Dstore(object):
         self.tokenizer = tokenizer
 
         # adding support for multiple gpus
-        self.num_gpus = faiss.get_num_gpus()
+        # subtracting 1 to "reserve" cuda:0 for hf model
+        self.num_gpus = faiss.get_num_gpus() - 1
+        self.num_shards = args.num_shards
 
         self.index = self.setup_faiss(args)
 
-    # taken from faiss benchs/bench_gpu_1bn.py
-    # note here that the default i0 is 1 because id 0 is already taken up for the hf model
-    def make_vres_vdev(self, i0=1, i1=-1):
-        "return vectors of device ids and resources useful for gpu_multiple"
-        gpu_resources = []
-        for i in range(self.num_gpus):
-            res = faiss.StandardGpuResources()
-            res.setTempMemory(int(6e9))
-            gpu_resources.append(res)
-
-        vres = faiss.GpuResourcesVector()
-        vdev = faiss.IntVector()
-
-        if i1 == -1:
-            i1 = self.num_gpus
-
-        for i in range(i0, i1):
-            vdev.push_back(i)
-            vres.push_back(gpu_resources[i])
-
-        return vres, vdev, gpu_resources
 
     def setup_faiss(self, args):
         if not args.dstore_filename:
             raise ValueError('Cannot build a datastore without the data.')
 
         start = time.time()
-        index = faiss.read_index(args.indexfile)#, faiss.IO_FLAG_ONDISK_SAME_DIR)
-        print('Reading datastore took {} s'.format(time.time() - start))
 
-        print('gpu faiss index')
-        #co = faiss.GpuClonerOptions()
-        #co.useFloat16 = True
-        #res = faiss.StandardGpuResources()
-        #index = faiss.index_cpu_to_gpu(res, 0, index, co)
+        # default to original usage if num_shards = 0
+        if self.num_shards == 0:
+            indexes = faiss.read_index(args.indexfile)#, faiss.IO_FLAG_ONDISK_SAME_DIR)
 
-        co = faiss.GpuMultipleClonerOptions()
-        co.useFloat16 = True
-        co.verbose = True
-        co.indicesOptions = faiss.INDICES_CPU
-        co.shard = True # builds IndexShards, which splits dataset over gpus (handles larger datasets)
+            #print('gpu faiss index')
+            co = faiss.GpuClonerOptions()
+            co.useFloat16 = True
+            res = faiss.StandardGpuResources()
+            index = faiss.index_cpu_to_gpu(res, 0, index, co)
 
-        vres, vdev, resources = self.make_vres_vdev(0, -1)
-        index = faiss.index_cpu_to_gpu_multiple(vres, vdev, index, co)
-        index.referenced_objects = resources
-        print('index sharded on multiple gpus')
+            index.nprobe = args.probe
 
-        index.nprobe = args.probe
+        else:
+            indexes = []
+            for shard_number in range(self.num_shards):
+                # get current index name
+                index_dir, index_name = os.path.split(args.indexfile)
+                split_ext = os.path.splitext(index_name)
+                index_name = split_ext[0] + str(shard_number) + split_ext[1]
+                curr_indexfile = os.path.join(index_dir, index_name)
+
+                if os.path.exists(curr_indexfile):
+                    index = faiss.read_index(curr_indexfile)
+                    print(f'\tdone reading index {shard_number}')
+
+                    # initialize resources and options
+                    # says in the faiss wiki that gpu indices are not thread safe because
+                    # it uses temp gpu memory or something -- set tempmem to 0 to avoid this
+                    # see https://github.com/facebookresearch/faiss/wiki/Threads-and-asynchronous-calls
+                    res = faiss.StandardGpuResources()
+                    res.setTempMemory(0)
+
+                    co = faiss.GpuClonerOptions()
+                    co.useFloat16 = True
+                    co.indicesOptions = faiss.INDICES_CPU
+                    print(f'\tmade resources and options for {shard_number}')
+
+                    # due to threading, i don't think this guarantees i'll search one query on one gpu
+                    # but that might be ok
+                    device = (shard_number % self.num_gpus) + 1 # gives index in range [1, num_gpus]
+                    index = faiss.index_cpu_to_gpu(res, device, index, co)
+                    index.nprobe = args.probe
+
+                    print(f'\tput index {shard_number} on gpu {device}')
+
+                    indexes.append(index)
+                else:
+                    print(f'SKIPPING INDEX {shard_number}')
+
+            print(f'using {len(indexes)} / {self.num_shards} shards')
+        print('Reading datastores took {} s'.format(time.time() - start))
 
         if args.dstore_fp16:
             print('Keys are fp16 and vals are int16')
@@ -105,32 +120,54 @@ class KNN_Dstore(object):
             self.vals = self.vals.astype(np.int if args.dstore_fp16 else np.int)
             print('Loading to memory took {} s'.format(time.time() - start))
 
-        return index
+        return indexes
 
 
-    def get_knns(self, queries):
-        start = time.time()
-        #import pdb; pdb.set_trace()
+    def get_knns(self, index, queries):
+        dists, knns = index.search(queries.detach().cpu().float().numpy(), self.k)
 
-        # "chunk" queries into smaller queries (along the first dimension) so that
-        # for larger datasets, index.search can still work; 8 is an arbitrary number
-        num_chunks = 1000
-        chunk_size = queries.shape[0] // num_chunks
+        if self.num_shards == 0:
+            return dists, knns
 
-        #import pdb; pdb.set_trace()
+        else:
+            return torch.from_numpy(dists).cpu(), torch.from_numpy(knns).cpu()
 
-        dists, knns = self.index.search(queries[:chunk_size, :].detach().cpu().float().numpy(), self.k) # first chunk
-        for i in range(1, num_chunks + 1):
-            # boundary condition; we only have to go to i = num_chunks when there's not an even divide
-            if i == num_chunks and queries.shape[0] % num_chunks == 0:
-                break
 
-            start, end = i * chunk_size, min((i + 1) * chunk_size, queries.shape[0])
-            next_dists, next_knns = self.index.search(queries[start:end, :].detach().cpu().float().numpy(), self.k)
-            dists, knns = torch.cat((dists, next_dists), dim=0), torch.cat((knns, next_knns), dim=0) # cat on first dim
+    def parallel_search_over_shards(self, queries):
+        dists, knns = None, None
 
-        #dists, knns = self.index.search(queries.detach().cpu().float().numpy(), self.k)
-        return dists, knns
+        # set max_workers as num_gpus in order to limit the number of queries searched per gpu at a time
+        # (prevent oom errors), but might be able to increase this number to get faster execution
+        with concurrent.futures.ThreadPoolExecutor(max_workers=self.num_gpus) as executor:
+            all_futures = [executor.submit(self.get_knns, self.index[i], queries) for i in range(len(self.index))]
+
+            for future in concurrent.futures.as_completed(all_futures):
+                i_dists, i_knns = future.result()
+
+                if dists is None:
+                    dists, knns = i_dists, i_knns
+                else:
+                    # `dim = 1` because second dimension of the output of `index.search` corresponds to `k` nearest neighbors,
+                    # so want to add column-wise
+                    dists, knns = torch.cat((dists, i_dists), dim=1), torch.cat((knns, i_knns), dim=1)
+
+                # sort the `dists` and then get the top `k` of them; then, using the indices that we got from
+                # sorting the `dists`, sort `knns` using that, and then take the top `k` of `knns`
+                # so want to add column-wise
+                sorted_dists, indices = torch.sort(dists, dim=1, descending=False)
+                dists = sorted_dists[:, :self.k]
+                knns = torch.gather(knns, 1, indices) # sort knns row-wise by indices
+                knns = knns[:, :self.k]
+
+                #print('\t\tSORTED DISTS AND TOOK TOP K')
+
+            #print(f'\t\t{dists.shape}, {knns.shape}')
+
+            # not sure if this saves a lot of memory but doing it just in case
+            del all_futures
+            gc.collect()
+
+        return dists.numpy(), knns.numpy()
 
 
     def get_knn_log_prob(self, queries, src, pad_idx):
@@ -167,7 +204,12 @@ class KNN_Dstore(object):
 
         # import pdb; pdb.set_trace()
         start_knn = time.time()
-        dists, knns = self.get_knns(queries[src != pad_idx])
+
+        if self.num_shards == 0:
+            dists, knns = self.get_knns(queries[src != pad_idx])
+        else:
+            dists, knns = self.parallel_search_over_shards(queries[src != pad_idx])
+
         end_knn = time.time()
         # print(f'got dists and knns in {end_knn - start_knn} seconds')
 

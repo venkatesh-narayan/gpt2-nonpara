@@ -990,6 +990,8 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
         knnlm_args.lmbda                 = getattr(knnlm_args, 'lmbda', self.config.lmbda)
         knnlm_args.tokens_per_sample     = getattr(knnlm_args, 'tokens_per_sample', self.config.stride)
 
+        knnlm_args.num_shards            = getattr(knnlm_args, 'num_shards', self.config.num_shards)
+
         return knnlm_args
 
     # add args that aren't in knnlm/fairseq/models/transformer_lm.py
@@ -1160,8 +1162,36 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
             shift_logits = lm_logits[..., :-1, :].contiguous()
             shift_labels = labels[..., 1:].contiguous()
             # Flatten the tokens
+            # loss_fct = CrossEntropyLoss()
+            # loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+
+            # we pass logits as per token loss so that we can compute the real perplexity
+            loss_fct = CrossEntropyLoss(reduction='none')
+            size_t = shift_labels.size()
+
+            loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+            loss = loss.view(*size_t)
+
+            lm_logits = loss.detach()
+
+            padding_mask = shift_labels.eq(-100)
+            loss.masked_fill_(padding_mask, 0.0)
+
+            # import pdb; pdb.set_trace()
+            num_tokens = (shift_labels != -100).sum()
+            loss = loss.sum() / num_tokens
+
+            '''
+            this is the older version; the replaced version (above) allows for better ppl calculations due
+            to using all tokens
+
+            # Shift so that tokens < n predict n
+            shift_logits = lm_logits[..., :-1, :].contiguous()
+            shift_labels = labels[..., 1:].contiguous()
+            # Flatten the tokens
             loss_fct = CrossEntropyLoss()
             loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+            '''
 
         if not return_dict:
             output = (lm_logits,) + transformer_outputs[1:]

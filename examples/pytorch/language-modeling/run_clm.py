@@ -49,6 +49,9 @@ from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version
 from transformers.utils.versions import require_version
 
+from sacremoses import MosesTokenizer, MosesDetokenizer
+
+mt = MosesTokenizer(lang='en')
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 check_min_version("4.10.0.dev0")
@@ -79,8 +82,12 @@ class KnnArguments:
         default=None, metadata={"help": "dstore mmap location"}
     )
 
-    dstore_size: Optional[int] = field(
-        default=0, metadata={"help": "size of dstore"}
+    #dstore_size: Optional[int] = field(
+    #    default=0, metadata={"help": "size of dstore"}
+    #)
+
+    dstore_sizes: str = field(
+        default='webtext_dstore_sizes.txt', metadata={"help": "location of txt file with all dstore sizes"}
     )
 
     faiss_index: Optional[str] = field(
@@ -89,6 +96,10 @@ class KnnArguments:
 
     lmbda: Optional[float] = field(
         default=0.25, metadata={"help": "knn interpolation coefficient"}
+    )
+
+    num_shards: Optional[int] = field(
+        default=0, metadata={"help": "number of shards to use"}
     )
 
 
@@ -391,6 +402,21 @@ def main():
     for k, v in vars(knn_args).items():
         setattr(config, k, v)
 
+    if knn_args.is_knnlm_model:
+        if not os.path.exists(knn_args.dstore_sizes):
+            raise ValueError('need to know the dstore sizes to continue')
+
+        f = open(knn_args.dstore_sizes, 'r')
+        dstore_size = 0
+        for i, line in enumerate(f):
+            if i == knn_args.num_shards:
+                break
+
+            dstore_size += int(line.split(' ')[1])
+
+        print('SETTING DSTORE SIZE TO ', dstore_size)
+        setattr(config, 'dstore_size', dstore_size)
+
     stride = min(tokenizer.model_max_length, data_args.stride) # for sliding window context
     config.stride = stride
 
@@ -579,6 +605,31 @@ def main():
         # if data_args.max_eval_samples is not None:
         #     eval_dataset = eval_dataset.select(range(data_args.max_eval_samples))
 
+
+    def compute_metrics(eval_preds):
+        """compute (time-aware) perplexity
+        Args:
+            eval_preds: the per-token loss
+            eval_labels: a tuple with labels and times
+        """
+
+        def get_num_tokens(label):
+            """get the original number of tokens to
+            compute ppl
+            """
+            # import pdb; pdb.set_trace()
+
+            text = tokenizer.decode(label[label!=-100], skip_special_tokens=True)
+
+            return len(mt.tokenize(text, return_str=True).split())
+
+        res = {}
+        eval_preds, eval_labels = eval_preds.predictions, eval_preds.label_ids
+        num_token_list = [get_num_tokens(x) for x in eval_labels]
+        res['real_ppl'] = math.exp(eval_preds.sum() / sum(num_token_list))
+
+        return res
+
     # Initialize our Trainer
     if knn_args.save_knnlm_dstore:
         trainer = Trainer(
@@ -589,6 +640,7 @@ def main():
             tokenizer=tokenizer,
             # Data collator will default to DataCollatorWithPadding, so we change it.
             data_collator=default_data_collator,
+            compute_metrics=compute_metrics, # added custom compute metrics to get real ppl
         )
 
     else:
@@ -601,6 +653,7 @@ def main():
             tokenizer=tokenizer,
             # Data collator will default to DataCollatorWithPadding, so we change it.
             data_collator=default_data_collator,
+            compute_metrics=compute_metrics, # added custom compute metrics to get real ppl
         )
 
     # Training

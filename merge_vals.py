@@ -19,14 +19,14 @@ from faiss.contrib.ondisk import merge_ondisk
 parser = argparse.ArgumentParser()
 
 parser.add_argument('--num_shards', type=int, default=20, help='number of shards created')
-parser.add_argument('--faiss_index', type=str, help='file to write the faiss index')
 parser.add_argument('--dstore_mmap', type=str, help='location of datastore')
 parser.add_argument('--dstore_out_path', type=str, help='location to write dstore files')
-parser.add_argument('--faiss_out_path', type=str, help='location to write faiss files')
 
 args = parser.parse_args()
 print(args)
 
+'''
+don't need this anymore
 def merge_all(faiss_index, num_shards, out_path):
     # by this point, all the indices should have been written
     print('********** LOADING TRAINED INDEX **********')
@@ -55,17 +55,20 @@ def merge_all(faiss_index, num_shards, out_path):
     end = time.time()
     print('********** FINISHED WRITING INDEX **********')
     print(f'took {end - start} s')
-
+'''
 
 def concatenate_vals(dstore_mmap, num_shards, out_path):
     f = open('dstore_sizes.txt', 'r')
-    dstore_sizes = dict()
-    for line in f:
+    dstore_sizes = []
+    for i, line in enumerate(f):
+        if i == num_shards:
+            break
+
         tokens = line.split(' ')
-        dstore_sizes[int(tokens[0])] = int(tokens[1])
+        dstore_sizes.append(int(tokens[1]))
     f.close()
 
-    dstore_size = sum(dstore_sizes.values())
+    dstore_size = sum(dstore_sizes)
     vals = np.memmap(out_path+'_vals.npy', dtype=np.int, mode='w+', shape=(dstore_size, 1))
     curr_position = 0
     for idx in range(num_shards):
@@ -80,5 +83,5 @@ def concatenate_vals(dstore_mmap, num_shards, out_path):
 
 
 if __name__ == '__main__':
-    merge_all(args.faiss_index, args.num_shards, args.faiss_out_path)
+    #merge_all(args.faiss_index, args.num_shards, args.faiss_out_path)
     concatenate_vals(args.dstore_mmap, args.num_shards, args.dstore_out_path)

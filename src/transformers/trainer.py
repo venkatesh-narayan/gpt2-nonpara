@@ -2338,7 +2338,7 @@ class Trainer:
 
             if hasattr(model, "knnlm_args"):
                 self.start_idxs = [] # contains tuples of start and end locations per batch
-                for i in range(batch_size):
+                for i in range(inputs["labels"].shape[0]):
                     curr_label = inputs["labels"][i, :] # get current (unshifted) label
                     indices = torch.nonzero(curr_label != -100)
                     self.start_idxs.append((indices[0].item(), indices[-1].item() + 1)) # last is exclusive

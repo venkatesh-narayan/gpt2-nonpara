@@ -33,7 +33,6 @@ parser = argparse.ArgumentParser()
 
 parser.add_argument('--txt_path', type=str, help='path to read dataset from')
 parser.add_argument('--model_name_or_path', type=str, help='name or path of model to use')
-parser.add_argument('--chunk_size', type=int, default=int(1e4), help='size of each passage')
 parser.add_argument('--stride', type=int, default=512, help='size of sliding window')
 parser.add_argument('--max_keys_used', type=int, default=int(1e6), help='max number of keys used to train faiss index')
 parser.add_argument('--idx', type=int, help='current shard index')
@@ -164,6 +163,7 @@ def save_datastore_for_shard(sharded_dataset, curr_dstore_mmap):
     config.dstore_size       = args.dstore_size
     config.faiss_index       = None
     config.lmbda             = args.lmbda
+    config.num_shards        = 0
 
     # set seed before initializing model
     set_seed(training_args.seed)

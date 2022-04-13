@@ -802,7 +802,7 @@ class TrainingArguments:
                 "version. Using `--per_device_eval_batch_size` is preferred."
             )
         per_device_batch_size = self.per_gpu_eval_batch_size or self.per_device_eval_batch_size
-        eval_batch_size = per_device_batch_size * max(1, self.n_gpu)
+        eval_batch_size = per_device_batch_size #* max(1, self.n_gpu) # removing this part for knnlm -- just want the batch size to be what i specify
         return eval_batch_size
 
     @cached_property
