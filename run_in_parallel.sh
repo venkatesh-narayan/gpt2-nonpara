@@ -9,8 +9,8 @@
 
 #SBATCH --output=slurm_output/run_in_parallel-%A_%a.out
 #SBATCH --error=slurm_output/run_in_parallel-%A_%a.err
-#SBATCH --array=40-59%7
-#SBATCH --gres=gpu:A6000:1
+#SBATCH --array=1-19%7
+#SBATCH --gres=gpu:a100:1
 #SBATCH --mem=35g
 #SBATCH --cpus-per-task=16
 #SBATCH -t 0
@@ -18,10 +18,10 @@
 taskid=${SLURM_ARRAY_TASK_ID}
 
 python3 build_indices_on_ram.py \
-    --txt_path fixed_webtext_saves/fixed_dataset_train${taskid}.txt \
+    --txt_path wikitext_saves/dataset_train${taskid}.txt \
     --model_name_or_path gpt2-large \
     --idx ${taskid} \
-    --dstore_mmap webtext/stride_512/dstore \
-    --faiss_index webtext/stride_512/knn.index \
+    --dstore_mmap wikitext/stride_512/dstore \
+    --faiss_index wikitext/stride_512/knn.index \
     --starting_point 0 \
     --dstore_fp16

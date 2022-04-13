@@ -359,6 +359,8 @@ class Trainer:
         self.eval_dataset = eval_dataset
         self.tokenizer = tokenizer
 
+        print(self.place_model_on_device)
+        print(f'------device: {args.device}')
         if self.place_model_on_device:
             self._move_model_to_device(model, args.device)
 
@@ -2585,6 +2587,8 @@ class Trainer:
         logits = nested_detach(logits)
         if len(logits) == 1:
             logits = logits[0]
+
+        import pdb; pdb.set_trace()
 
         return (loss, logits, labels)
 

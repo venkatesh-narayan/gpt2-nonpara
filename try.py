@@ -18,8 +18,10 @@ import os
 import collections
 
 from tqdm import tqdm
+from transformers import AutoTokenizer
 
 import gc
+import numpy as np
 
 num_gpus = faiss.get_num_gpus()
 
@@ -72,34 +74,38 @@ def search(index, query, shard_number, k):
 
 def parallel_search_over_chunks(indexes, query, k, num_shards):
     import pdb; pdb.set_trace()
-    dists, knns = torch.empty((1, 1)), torch.empty((1, 1)) # initialize dists and knns to empty tensors
+    # dists, knns = torch.empty((1, 1)), torch.empty((1, 1)) # initialize dists and knns to empty tensors
+    dists, knns = None, None
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=num_gpus) as executor:
         all_futures = [executor.submit(search, indexes[i], query, i, k) for i in range(num_shards)]
 
-    import pdb; pdb.set_trace()
+        for future in concurrent.futures.as_completed(all_futures):
+            # import pdb; pdb.set_trace()
+            i_dists, i_knns = future.result()
+            print(i_dists)
 
-    for future in concurrent.futures.as_completed(all_futures):
-        i_dists, i_knns = future.result()
-        print(i_dists)
+            # in the beginning, there's nothing to cat; just want to set the variables
+            # this is a better base case than enumerating over the futures and doing
+            # something like "`if i == 0`" because for the first `max_workers` threads,
+            # `i` will be 0, so there can be a chance for overwriting
+            # if dists.shape == (1, 1) and knns.shape == (1, 1):
+            #     dists, knns = copy.deepcopy(i_dists), copy.deepcopy(i_knns)
+            #     print('\t\tSETTING INITIAL DISTS AND KNNS')
+            # else:
 
-        # in the beginning, there's nothing to cat; just want to set the variables
-        # this is a better base case than enumerating over the futures and doing
-        # something like "`if i == 0`" because for the first `max_workers` threads,
-        # `i` will be 0, so there can be a chance for overwriting
-        if dists.shape == (1, 1) and knns.shape == (1, 1):
-            dists, knns = copy.deepcopy(i_dists), copy.deepcopy(i_knns)
-            print('\t\tSETTING INITIAL DISTS AND KNNS')
-        else:
             # to save memory, i can just find the top `k` dists at every instance
             # `dim = 1` because second dimension of the output of `index.search` corresponds to `k` nearest neighbors,
             # so want to add column-wise
-            dists, knns = torch.cat((dists, i_dists), dim=1), torch.cat((knns, i_knns), dim=1)
+            if dists is None:
+                dists, knns = i_dists, i_knns
+            else:
+                dists, knns = torch.cat((dists, i_dists), dim=1), torch.cat((knns, i_knns), dim=1)
 
             # sort the `dists` and then get the top `k` of them; then, using the indices that we got from
             # sorting the `dists`, sort `knns` using that, and then take the top `k` of `knns`
             # here, `dim = 1` to sort by rows
-            sorted_dists, indices = torch.sort(dists, dim=1, descending=True)
+            sorted_dists, indices = torch.sort(dists, dim=1, descending=False)
             dists = sorted_dists[:, :k]
             knns = torch.gather(knns, 1, indices) # sort knns row-wise by indices
             knns = knns[:, :k]
@@ -121,9 +127,20 @@ if not os.path.exists(f'test_query{seed}.pt'):
 else:
     x = torch.load(f'test_query{seed}.pt')
 
+
+# for debugging purpose
+tok = AutoTokenizer.from_pretrained('gpt2-large')
+
+keys = np.memmap('test_keys/dstore_keys.npy', dtype=np.float16, mode='r', shape=(62644, 1280))
+vals = np.memmap('test_keys/dstore_vals.npy', dtype=np.int, mode='r', shape=(62644, 1))
+
+x = torch.tensor(keys[:1536])
+
 indexes = set_up_faiss(20)
 
 dists, knns = parallel_search_over_chunks(indexes, x, 1024, 20)
+
+import pdb; pdb.set_trace()
 
 # below is for sanity check; i'm running the same query over the
 # datastore with 10% of webtext (20 shards), so it should find

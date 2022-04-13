@@ -842,6 +842,7 @@ class TrainingArguments:
             device = torch.device("cuda", self.local_rank)
             self._n_gpu = 1
         elif self.local_rank == -1:
+            # print(f'local rank {self.local_rank}')
             # if n_gpu is > 1 we'll use nn.DataParallel.
             # If you only want to use a specific subset of GPUs use `CUDA_VISIBLE_DEVICES=0`
             # Explicitly set CUDA to the first (index 0) CUDA device, otherwise `set_device` will
@@ -853,6 +854,7 @@ class TrainingArguments:
             # the default value.
             self._n_gpu = torch.cuda.device_count()
         else:
+            # print(f'local rank {self.local_rank}')
             # Here, we'll use torch.distributed.
             # Initializes the distributed backend which will take care of synchronizing nodes/GPUs
             torch.distributed.init_process_group(backend="nccl")
