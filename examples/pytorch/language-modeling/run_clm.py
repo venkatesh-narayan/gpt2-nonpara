@@ -27,6 +27,8 @@ import sys
 from dataclasses import dataclass, field
 from typing import Optional
 
+import numpy as np
+
 import datasets
 from datasets import load_dataset
 
@@ -134,7 +136,7 @@ class ModelArguments:
         default=None, metadata={"help": "Pretrained tokenizer name or path if not the same as model_name"}
     )
     cache_dir: Optional[str] = field(
-        default=None,
+        default="checkpoints/hf",
         metadata={"help": "Where do you want to store the pretrained models downloaded from huggingface.co"},
     )
     use_fast_tokenizer: bool = field(
@@ -421,7 +423,7 @@ def main():
     config.stride = stride
 
     # save memory
-    config.keys_to_ignore_at_inference = "logits"
+    config.keys_to_ignore_at_inference = ["logits", "past_key_values"]
 
     # change model from auto to knnlmgpt2
     if model_args.model_name_or_path:
@@ -628,12 +630,13 @@ def main():
 
         res = {}
         eval_preds, eval_labels = eval_preds.predictions, eval_preds.label_ids
+        # import pdb; pdb.set_trace()
 
         if isinstance(eval_preds, tuple):
-            eval_preds = eval_preds[-1] 
+            eval_preds = eval_preds[-1]
 
         num_token_list = [get_num_tokens(x) for x in eval_labels]
-        res['real_ppl'] = math.exp(eval_preds.sum() / sum(num_token_list))
+        res['real_ppl'] = math.exp(eval_preds.astype(np.float32).sum() / sum(num_token_list))
 
         return res
 

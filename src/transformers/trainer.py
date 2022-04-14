@@ -2588,7 +2588,7 @@ class Trainer:
         if len(logits) == 1:
             logits = logits[0]
 
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
 
         return (loss, logits, labels)
 
