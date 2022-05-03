@@ -23,10 +23,14 @@ class KNN_Dstore(object):
         self.vocab_size = vocab_size
         self.tokenizer = tokenizer
 
+        self.use_gpu_faiss = args.use_gpu_faiss
+
+        self.num_shards = args.num_shards
+
         # adding support for multiple gpus
         # subtracting 1 to "reserve" cuda:0 for hf model
-        self.num_gpus = faiss.get_num_gpus() - 1
-        self.num_shards = args.num_shards
+        self.num_parallelize = faiss.get_num_gpus() - 1 if args.use_gpu_faiss else os.cpu_count()
+        if self.num_shards > 0: print(f'going to parallelize with {self.num_parallelize} threads')
 
         self.index = self.setup_faiss(args)
 
@@ -42,12 +46,13 @@ class KNN_Dstore(object):
             indexes = faiss.read_index(args.indexfile)#, faiss.IO_FLAG_ONDISK_SAME_DIR)
 
             #print('gpu faiss index')
-            co = faiss.GpuClonerOptions()
-            co.useFloat16 = True
-            res = faiss.StandardGpuResources()
-            index = faiss.index_cpu_to_gpu(res, 0, index, co)
+            if self.use_gpu_faiss:
+                co = faiss.GpuClonerOptions()
+                co.useFloat16 = True
+                res = faiss.StandardGpuResources()
+                indexes = faiss.index_cpu_to_gpu(res, 0, indexes, co)
 
-            index.nprobe = args.probe
+            indexes.nprobe = args.probe
 
         else:
             indexes = []
@@ -62,25 +67,27 @@ class KNN_Dstore(object):
                     index = faiss.read_index(curr_indexfile)
                     print(f'\tdone reading index {shard_number}')
 
-                    # initialize resources and options
-                    # says in the faiss wiki that gpu indices are not thread safe because
-                    # it uses temp gpu memory or something -- set tempmem to 0 to avoid this
-                    # see https://github.com/facebookresearch/faiss/wiki/Threads-and-asynchronous-calls
-                    res = faiss.StandardGpuResources()
-                    res.setTempMemory(0)
+                    if self.use_gpu_faiss:
+                        # initialize resources and options
+                        # says in the faiss wiki that gpu indices are not thread safe because
+                        # it uses temp gpu memory or something -- set tempmem to 0 to avoid this
+                        # see https://github.com/facebookresearch/faiss/wiki/Threads-and-asynchronous-calls
+                        res = faiss.StandardGpuResources()
+                        res.setTempMemory(0)
 
-                    co = faiss.GpuClonerOptions()
-                    co.useFloat16 = True
-                    co.indicesOptions = faiss.INDICES_CPU
-                    print(f'\tmade resources and options for {shard_number}')
+                        co = faiss.GpuClonerOptions()
+                        co.useFloat16 = True
+                        co.indicesOptions = faiss.INDICES_CPU
+                        print(f'\tmade resources and options for {shard_number}')
 
-                    # due to threading, i don't think this guarantees i'll search one query on one gpu
-                    # but that might be ok
-                    device = (shard_number % self.num_gpus) + 1 # gives index in range [1, num_gpus]
-                    index = faiss.index_cpu_to_gpu(res, device, index, co)
+                        # due to threading, i don't think this guarantees i'll search one query on one gpu
+                        # but that might be ok
+                        device = (shard_number % self.num_parallelize) + 1 # gives index in range [1, num_gpus]
+                        index = faiss.index_cpu_to_gpu(res, device, index, co)
+
+                        print(f'\tput index {shard_number} on gpu {device}')
+
                     index.nprobe = args.probe
-
-                    print(f'\tput index {shard_number} on gpu {device}')
 
                     indexes.append(index)
                 else:
@@ -138,7 +145,7 @@ class KNN_Dstore(object):
 
         # set max_workers as num_gpus in order to limit the number of queries searched per gpu at a time
         # (prevent oom errors), but might be able to increase this number to get faster execution
-        with concurrent.futures.ThreadPoolExecutor(max_workers=self.num_gpus) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=self.num_parallelize) as executor:
             all_futures = [executor.submit(self.get_knns, self.index[i], queries) for i in range(len(self.index))]
 
             for future in concurrent.futures.as_completed(all_futures):
@@ -206,7 +213,7 @@ class KNN_Dstore(object):
         start_knn = time.time()
 
         if self.num_shards == 0:
-            dists, knns = self.get_knns(queries[src != pad_idx])
+            dists, knns = self.get_knns(self.index, queries[src != pad_idx])
         else:
             dists, knns = self.parallel_search_over_shards(queries[src != pad_idx])
 

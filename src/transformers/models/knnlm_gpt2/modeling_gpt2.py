@@ -991,6 +991,7 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
         knnlm_args.tokens_per_sample     = getattr(knnlm_args, 'tokens_per_sample', self.config.stride)
 
         knnlm_args.num_shards            = getattr(knnlm_args, 'num_shards', self.config.num_shards)
+        knnlm_args.use_gpu_faiss         = getattr(knnlm_args, 'use_gpu_faiss', self.config.use_gpu_faiss)
 
         return knnlm_args
 
@@ -1134,16 +1135,21 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
             # assume it's always last_ffn_input for now
             assert self.knnlm_args.knn_keytype == 'last_ffn_input'
             assert knn_emb is not None, "didn't get any knn embeddings!"
-            assert labels is not None # just a sanity check
 
             queries = knn_emb
 
             # print('going to start get_knn_log_prob')
             s = time.time()
             # padding is usually -100 in huggingface transformers models
-            knn_probs = self.knn_dstore.get_knn_log_prob(queries,
-                                                         labels,
-                                                         pad_idx=-100)
+            if labels is not None:
+                knn_probs = self.knn_dstore.get_knn_log_prob(queries,
+                                                             labels,
+                                                             pad_idx=-100)
+
+            else:
+                knn_probs = self.knn_dstore.get_knn_log_prob(queries,
+                                                             input_ids,
+                                                             pad_idx=0) # for the eleutherai lm-eval
 
             # print(f'took {time.time() - s} seconds')
 

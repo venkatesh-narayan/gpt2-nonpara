@@ -4,10 +4,16 @@ from lm_eval.base import BaseLM
 import os
 
 class knnlmHFLM(BaseLM):
-    def __init__(self, dstore_mmap, faiss_index, num_shards, lmbda=0.25, stride=512, save_knnlm_dstore=False, knnlm=True,
-                 device='cuda:0', pretrained='gpt2-large', revision='main', subfolder=None, tokenizer=None, batch_size=1,
-                 root_path='/projects/tir3/users/junxianh/venkaten/gpt2-nonpara'):
+    def __init__(self, dstore_mmap, faiss_index, dstore_sizes_path, num_shards, lmbda=0.25, stride=512,
+                 device='cuda:0', pretrained='gpt2-large', use_gpu_faiss=True, revision='main', subfolder=None, tokenizer=None,
+                 batch_size=1, root_path='/projects/tir3/users/junxianh/venkaten/gpt2-nonpara'):
         super().__init__()
+
+        # if passing in arguments, they'll probably be stored as strings -- convert to correct dtype
+        batch_size = int(batch_size)
+        stride = int(stride)
+        lmbda = float(lmbda)
+        num_shards = int(num_shards)
 
         assert isinstance(device, str)
         assert isinstance(pretrained, str)
@@ -23,22 +29,20 @@ class knnlmHFLM(BaseLM):
                                                          cache_dir=None,
                                                          revision=revision + ("/" + subfolder if subfolder is not None else ""),
                                                          use_auth_token=None)
+
         config.stride = stride
-        config.save_knnlm_dstore = save_knnlm_dstore
-        config.knnlm = knnlm
+        config.save_knnlm_dstore = False
+        config.knnlm = True # always do evaluation here
         config.dstore_mmap = os.path.join(root_path, dstore_mmap)
-        config.dstore_size = self.get_dstore_size(num_shards)
+        config.dstore_size = self.get_dstore_size(dstore_sizes_path, num_shards)
         config.faiss_index = os.path.join(root_path, faiss_index)
         config.lmbda = lmbda
-
-        # TODO: update this to be less of a hack once subfolder is fixed in HF
-        self.gpt2 = transformers.knnlmGPT2LMHeadModel.from_pretrained(pretrained,
-                                                                      revision=revision + ("/" + subfolder if subfolder is not None else ""),
-                                                                      config=config).to(self.device)
-        self.gpt2.eval()
+        config.num_shards = num_shards
+        config.use_gpu_faiss = use_gpu_faiss
 
         # pretrained tokenizer for neo is broken for now so just hard-coding this to gpt2
-        self.tokenizer = transformers.AutoTokenizer.from_pretrained(pretrained if tokenizer is None else tokenizer,
+        # using GPT2Tokenizer instead of AutoTokenizer
+        self.tokenizer = transformers.GPT2Tokenizer.from_pretrained(pretrained if tokenizer is None else tokenizer,
                                                                     revision=revision,
                                                                     subfolder=subfolder,
                                                                     use_fast=True)
@@ -54,6 +58,16 @@ class knnlmHFLM(BaseLM):
             assert self.tokenizer.encode('hello\n\nhello') == [31373, 198, 198, 31373], \
                 self.tokenizer.encode('hello\n\nhello')
 
+        config.tokenizer = self.tokenizer
+
+        # TODO: update this to be less of a hack once subfolder is fixed in HF
+        self.gpt2 = transformers.knnlmGPT2LMHeadModel.from_pretrained(pretrained,
+                                                                      revision=revision + ("/" + subfolder if subfolder is not None else ""),
+                                                                      config=config).to(self.device)
+
+        self.gpt2.eval()
+
+
         # multithreading and batching
         self.batch_size_per_gpu = batch_size  # todo: adaptive batch size
 
@@ -62,10 +76,10 @@ class knnlmHFLM(BaseLM):
         # if gpus > 1:
         #     self.gpt2 = nn.DataParallel(self.gpt2)
 
-    def get_dstore_size(self, num_shards):
+    def get_dstore_size(self, dstore_sizes_path, num_shards):
         dstore_size = 0
 
-        f = open(os.path.join(self.root_path, 'dstore_sizes.txt'), 'r')
+        f = open(os.path.join(self.root_path, dstore_sizes_path), 'r')
         for i, line in enumerate(f):
             if i == num_shards:
                 break

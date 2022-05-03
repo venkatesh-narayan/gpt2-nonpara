@@ -69,7 +69,7 @@ MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
 @dataclass
 class KnnArguments:
     is_knnlm_model: bool = field(
-            default=False, metadata={"help": "tells whether or not the model is a knnlm_* model"}
+        default=False, metadata={"help": "tells whether or not the model is a knnlm_* model"}
     )
 
     knnlm: bool = field(
@@ -84,9 +84,9 @@ class KnnArguments:
         default=None, metadata={"help": "dstore mmap location"}
     )
 
-    #dstore_size: Optional[int] = field(
-    #    default=0, metadata={"help": "size of dstore"}
-    #)
+    dstore_size: Optional[int] = field(
+        default=0, metadata={"help": "size of dstore"}
+    )
 
     dstore_sizes: str = field(
         default='webtext_dstore_sizes.txt', metadata={"help": "location of txt file with all dstore sizes"}
@@ -102,6 +102,10 @@ class KnnArguments:
 
     num_shards: Optional[int] = field(
         default=0, metadata={"help": "number of shards to use"}
+    )
+
+    use_gpu_faiss: bool = field(
+        default=False, metadata={"help": "whether or not to use gpu for faiss indexes"}
     )
 
 
@@ -405,19 +409,22 @@ def main():
         setattr(config, k, v)
 
     if knn_args.is_knnlm_model:
-        if not os.path.exists(knn_args.dstore_sizes):
-            raise ValueError('need to know the dstore sizes to continue')
+        if knn_args.dstore_size > 0:
+            print('SETTING DSTORE SIZE TO ', knn_args.dstore_size)
+            setattr(config, 'dstore_size', knn_args.dstore_size)
+        elif os.path.exists(knn_args.dstore_sizes):
+            f = open(knn_args.dstore_sizes, 'r')
+            dstore_size = 0
+            for i, line in enumerate(f):
+                if i == knn_args.num_shards:
+                    break
 
-        f = open(knn_args.dstore_sizes, 'r')
-        dstore_size = 0
-        for i, line in enumerate(f):
-            if i == knn_args.num_shards:
-                break
+                dstore_size += int(line.split(' ')[1])
 
-            dstore_size += int(line.split(' ')[1])
-
-        print('SETTING DSTORE SIZE TO ', dstore_size)
-        setattr(config, 'dstore_size', dstore_size)
+            print('SETTING DSTORE SIZE TO ', dstore_size)
+            setattr(config, 'dstore_size', dstore_size)
+        else:
+            raise ValueError('cannot figure out dstore size!')
 
     stride = min(tokenizer.model_max_length, data_args.stride) # for sliding window context
     config.stride = stride

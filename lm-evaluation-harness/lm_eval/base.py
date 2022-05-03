@@ -12,6 +12,12 @@ from tqdm import tqdm
 import torch
 import torch.nn.functional as F
 
+import transformers
+from transformers import GPT2Tokenizer, AutoConfig # defaulting to GPT2Tokenizer, change as needed
+from transformers.testing_utils import CaptureLogger
+
+from itertools import chain
+
 from lm_eval.metrics import mean, weighted_perplexity, weighted_mean, bits_per_byte
 from lm_eval import utils
 from abc import abstractmethod
@@ -24,17 +30,17 @@ class LM(abc.ABC):
     @abstractmethod
     def loglikelihood(self, requests):
         """Compute log-likelihood of generating a continuation from a context.
-        Downstream tasks should attempt to use loglikelihood instead of other 
+        Downstream tasks should attempt to use loglikelihood instead of other
         LM calls whenever possible.
 
         :param requests: list
             A list of pairs (context, continuation)
             context: str
-                Context string. Implementations of LM must be able to handle an 
+                Context string. Implementations of LM must be able to handle an
                 empty context string.
             continuation: str
-                The continuation over which log likelihood will be calculated. If 
-                there is a word boundary, the space should be in the continuation. 
+                The continuation over which log likelihood will be calculated. If
+                there is a word boundary, the space should be in the continuation.
                 For example, context="hello" continuation=" world" is correct.
         :return: list
             A list of pairs (logprob, isgreedy)
@@ -97,7 +103,7 @@ class LM(abc.ABC):
             context: str
                 Context string
             until: [str]
-                The string sequences to generate until. These string sequences 
+                The string sequences to generate until. These string sequences
                 may each span across multiple tokens, or may be part of one token.
         :return: list
             A list of strings continuation
@@ -146,7 +152,7 @@ class BaseLM(LM):
 
     @abstractmethod
     def tok_encode(self, string: str): pass
-    
+
     @abstractmethod
     def tok_decode(self, tokens: Iterable[int]): pass
 
@@ -200,10 +206,10 @@ class BaseLM(LM):
             # TODO: extract out this call so it only gets called once and also somehow figure out partial caching for
             # that
             string_nll = self._loglikelihood_tokens(rolling_token_windows, disable_tqdm=True)
-            
+
             # discard is_greedy
             string_nll = [x[0] for x in string_nll]
-            
+
             string_nll = sum(string_nll)
             loglikelihoods.append(string_nll)
 
@@ -223,9 +229,10 @@ class BaseLM(LM):
 
             toks = x[1] + x[2]
             return -len(toks), tuple(toks)
-        
+
         # TODO: automatic (variable) batch size detection for vectorization
         reord = utils.Reorderer(requests, _collate)
+        #import pdb; pdb.set_trace()
         for chunk in utils.chunks(tqdm(reord.get_reordered(), disable=disable_tqdm), self.batch_size):
             inps = []
             cont_toks_list = []
@@ -272,7 +279,7 @@ class BaseLM(LM):
                 cont_toks_list.append(cont)
                 inplens.append(inplen)
 
-            batched_inps = torch.cat(inps, dim=0)  # [batch, padding_length
+            batched_inps = torch.cat(inps, dim=0)  # [batch, padding_length]
             multi_logits = F.log_softmax(self._model_call(batched_inps), dim=-1).cpu()  # [batch, padding_length, vocab]
 
             for (cache_key, _, _), logits, inp, inplen, cont_toks \
@@ -301,9 +308,9 @@ class BaseLM(LM):
                 res.append(answer)
 
         return reord.get_original(res)
-    
+
     def greedy_until(self, requests):
-        # TODO: implement fully general `until` that handles untils that are 
+        # TODO: implement fully general `until` that handles untils that are
         #       multiple tokens or that span multiple tokens correctly
 
         # TODO: extract to TokenizedLM?
@@ -312,7 +319,7 @@ class BaseLM(LM):
         def _collate(x):
             toks = self.tok_encode(x[0])
             return len(toks), x[0]
-        
+
         reord = utils.Reorderer(requests, _collate)
 
         for context, until in tqdm(reord.get_reordered()):
@@ -320,21 +327,26 @@ class BaseLM(LM):
                 until = [until]
 
             primary_until, = self.tok_encode(until[0])
-            
+
             context_enc = torch.tensor([self.tok_encode(context)[self.max_gen_toks - self.max_length:]]).to(self.device)
 
             cont = self._model_generate(context_enc, context_enc.shape[1] + self.max_gen_toks, primary_until)
 
             s = self.tok_decode(cont[0].tolist()[context_enc.shape[1]:])
 
+            with open('/projects/tir3/users/junxianh/venkaten/gpt2-nonpara/generation.txt', 'a') as f:
+                f.write('CONTEXT IS: ' + context + '\n')
+                f.write('GENERATION: ' + s + '\n')
+                f.write('\n')
+
             for term in until:
                 s = s.split(term)[0]
-            
+
             # partial caching
             self.cache_hook.add_partial("greedy_until", (context, until), s)
-            
+
             res.append(s)
-        
+
         return reord.get_original(res)
 
 
@@ -355,7 +367,7 @@ class Task(abc.ABC):
     # The name of a subset within `DATASET_PATH`.
     DATASET_NAME: str = None
 
-    def __init__(self, data_dir=None, cache_dir=None, download_mode=None):
+    def __init__(self, data_dir=None, cache_dir=None, download_mode=None, pretrained='gpt2-large', stride=512):
         """
         :param data_dir: str
             Stores the path to a local folder containing the `Task`'s data files.
@@ -478,22 +490,22 @@ class Task(abc.ABC):
 
     @abstractmethod
     def construct_requests(self, doc, ctx):
-        """ Uses RequestFactory to construct Requests and returns an iterable of 
+        """ Uses RequestFactory to construct Requests and returns an iterable of
         Requests which will be sent to the LM.
 
         :param doc:
             The document as returned from training_docs, validation_docs, or test_docs.
         :param ctx: str
-            The context string, generated by fewshot_context. This includes the natural 
+            The context string, generated by fewshot_context. This includes the natural
             language description, as well as the few shot examples, and the question
-            part of the document for `doc`. 
+            part of the document for `doc`.
         """
         pass
 
     @abstractmethod
     def process_results(self, doc, results):
-        """Take a single document and the LM results and evaluates, returning a 
-        dict where keys are the names of submetrics and values are the values of 
+        """Take a single document and the LM results and evaluates, returning a
+        dict where keys are the names of submetrics and values are the values of
         the metric for that one document
 
         :param doc:
@@ -507,7 +519,7 @@ class Task(abc.ABC):
     def aggregation(self):
         """
         :returns: {str: [metric_score] -> float}
-            A dictionary where keys are the names of submetrics and values are 
+            A dictionary where keys are the names of submetrics and values are
             functions that aggregate a list of metric scores
         """
         pass
@@ -516,7 +528,7 @@ class Task(abc.ABC):
     def higher_is_better(self):
         """
         :returns: {str: bool}
-            A dictionary where keys are the names of submetrics and values are 
+            A dictionary where keys are the names of submetrics and values are
             whether a higher value of the submetric is better
         """
         pass
@@ -609,13 +621,13 @@ class MultipleChoiceTask(Task):
             "acc": acc,
             "acc_norm": acc_norm,
         }
-    
+
     def higher_is_better(self):
         return {
             "acc": True,
             "acc_norm": True,
         }
-    
+
     def aggregation(self):
         return {
             "acc": mean,
@@ -698,12 +710,12 @@ def hash_args(attr, args):
 
 class CacheHook:
     def __init__(self, cachinglm):
-        if cachinglm is None: 
+        if cachinglm is None:
             self.dbdict = None
             return
 
         self.dbdict = cachinglm.dbdict
-    
+
     def add_partial(self, attr, req, res):
         if self.dbdict is None:
             return
@@ -733,7 +745,7 @@ class CachingLM:
         def fn(requests):
             res = []
             remaining_reqs = []
-            
+
             # figure out which ones are cached and which ones are new
             for req in requests:
                 hsh = hash_args(attr, req)
@@ -746,7 +758,7 @@ class CachingLM:
                 else:
                     res.append(None)
                     remaining_reqs.append(req)
-            
+
             # actually run the LM on the requests that do not have cached results
             rem_res = getattr(self.lm, attr)(remaining_reqs)
 
@@ -765,7 +777,7 @@ class CachingLM:
 
             return res
         return fn
-    
+
     def get_cache_hook(self):
         return CacheHook(self)
 
@@ -785,18 +797,18 @@ class Request:
         self.request_type = request_type
         self.args = args
         self.index = index
-    
+
     def __iter__(self):
         if REQUEST_RETURN_LENGTHS[self.request_type] is None:
             raise IndexError('This request type does not return multiple arguments!')
         for i in range(REQUEST_RETURN_LENGTHS[self.request_type]):
             yield Request(self.request_type, self.args, i)
-    
+
     def __getitem__(self, i):
         if REQUEST_RETURN_LENGTHS[self.request_type] is None:
             raise IndexError('This request type does not return multiple arguments!')
         return Request(self.request_type, self.args, i)
-    
+
     def __eq__(self, other):
         return self.request_type == other.request_type and self.args == other.args and self.index == other.index
 

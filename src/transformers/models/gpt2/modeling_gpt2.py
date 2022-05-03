@@ -970,6 +970,7 @@ class GPT2LMHeadModel(GPT2PreTrainedModel):
         lm_logits = self.lm_head(hidden_states)
 
         loss = None
+        full_loss = None
         if labels is not None:
             # Shift so that tokens < n predict n
             shift_logits = lm_logits[..., :-1, :].contiguous()
