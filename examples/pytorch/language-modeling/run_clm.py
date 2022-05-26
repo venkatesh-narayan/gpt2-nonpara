@@ -85,7 +85,7 @@ class KnnArguments:
     )
 
     dstore_size: Optional[int] = field(
-        default=0, metadata={"help": "size of dstore"}
+        default=0, metadata={"help": "size of dstore. DO NOT PROVIDE IF USING SHARD APPROACH"}
     )
 
     dstore_sizes: str = field(
@@ -102,6 +102,14 @@ class KnnArguments:
 
     num_shards: Optional[int] = field(
         default=0, metadata={"help": "number of shards to use"}
+    )
+
+    exclude_shards: Optional[list] = field(
+        default=None, metadata={"help": "specify which shards you want to exclude (from 0 to num_shards)"}
+    )
+
+    include_shards: Optional[list] = field(
+        default=None, metadata={"help": "specify which extra shards you want to include (from num_shards to total_shards)"}
     )
 
     use_gpu_faiss: bool = field(
@@ -412,17 +420,40 @@ def main():
         if knn_args.dstore_size > 0:
             print('SETTING DSTORE SIZE TO ', knn_args.dstore_size)
             setattr(config, 'dstore_size', knn_args.dstore_size)
+
+            # assuming dstore_size is only provided when not using sharded approach
+            print('SHARD_IDXS_USED: ', [])
+            setattr(config, 'shard_idxs_used', [])
         elif os.path.exists(knn_args.dstore_sizes):
-            f = open(knn_args.dstore_sizes, 'r')
-            dstore_size = 0
-            for i, line in enumerate(f):
-                if i == knn_args.num_shards:
-                    break
+            shard_idxs_used = []
+            with open(knn_args.dstore_sizes, 'r') as f:
+                dstore_size = 0
+                for i, line in enumerate(f):
+                    if i >= knn_args.num_shards:
+                        # if include shards is provided, include any i from that list; otherwise,
+                        # no need to continue, just break
+                        if knn_args.include_shards is not None:
+                            if i in knn_args.include_shards:
+                                dstore_size += int(line.split(' ')[1])
+                                shard_idxs_used.append(i)
+                        else:
+                            break
 
-                dstore_size += int(line.split(' ')[1])
+                    else:
+                        # i is in [0 to num_shards) -- if exclude shards is provided, don't include any
+                        # i's from that list; otherwise, just add everything
+                        if knn_args.exclude_shards is not None:
+                            if i not in knn_args.exclude_shards:
+                                dstore_size += int(line.split(' ')[1])
+                                shard_idxs_used.append(i)
+                        else:
+                            dstore_size += int(line.split(' ')[1])
+                            shard_idxs_used.append(i)
 
-            print('SETTING DSTORE SIZE TO ', dstore_size)
-            setattr(config, 'dstore_size', dstore_size)
+                print('SETTING DSTORE SIZE TO ', dstore_size)
+                setattr(config, 'dstore_size', dstore_size)
+                print('SHARD IDXS USED: ', shard_idxs_used)
+                setattr(config, 'shard_idxs_used', shard_idxs_used)
         else:
             raise ValueError('cannot figure out dstore size!')
 

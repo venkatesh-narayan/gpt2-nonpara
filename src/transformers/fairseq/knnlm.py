@@ -27,6 +27,8 @@ class KNN_Dstore(object):
 
         self.num_shards = args.num_shards
 
+        self.shard_idxs_used = args.shard_idxs_used
+
         # adding support for multiple gpus
         # subtracting 1 to "reserve" cuda:0 for hf model
         self.num_parallelize = faiss.get_num_gpus() - 1 if args.use_gpu_faiss else os.cpu_count()
@@ -56,7 +58,7 @@ class KNN_Dstore(object):
 
         else:
             indexes = []
-            for shard_number in range(self.num_shards):
+            for shard_number in self.shard_idxs_used:
                 # get current index name
                 index_dir, index_name = os.path.split(args.indexfile)
                 split_ext = os.path.splitext(index_name)

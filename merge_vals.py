@@ -18,7 +18,8 @@ from faiss.contrib.ondisk import merge_ondisk
 
 parser = argparse.ArgumentParser()
 
-parser.add_argument('--num_shards', type=int, default=20, help='number of shards created')
+parser.add_argument('--dstore_sizes_path', type=str, default='webtext_dstore_sizes.txt', help='path to txt with dstore sizes')
+parser.add_argument('--num_shards', type=int, help='number of shards created')
 parser.add_argument('--dstore_mmap', type=str, help='location of datastore')
 parser.add_argument('--dstore_out_path', type=str, help='location to write dstore files')
 
@@ -57,8 +58,8 @@ def merge_all(faiss_index, num_shards, out_path):
     print(f'took {end - start} s')
 '''
 
-def concatenate_vals(dstore_mmap, num_shards, out_path):
-    f = open('dstore_sizes.txt', 'r')
+def concatenate_vals(dstore_mmap, num_shards, out_path, dstore_sizes_path):
+    f = open(dstore_sizes_path, 'r')
     dstore_sizes = []
     for i, line in enumerate(f):
         if i == num_shards:
@@ -76,12 +77,15 @@ def concatenate_vals(dstore_mmap, num_shards, out_path):
         curr_dstore_mmap = os.path.join(split_path[0], str(idx), split_path[1])
         if os.path.exists(curr_dstore_mmap+'_vals.npy'):
             intermediate_vals = np.memmap(curr_dstore_mmap+'_vals.npy', dtype=np.int, mode='r', shape=(dstore_sizes[idx], 1))
-            vals[curr_position:curr_position + dstore_sizes[idx], :] = intermediate_vals
-            curr_position += dstore_sizes[idx]
+        else:
+            intermediate_vals = np.zeros((dstore_sizes[idx], 1)) # if it doesn't exist, just add zeros in place of it; it'll never be retrieved anyway
 
-            #os.remove(curr_dstore_mmap+'_vals.npy') # remove intermediate vals once finished concatenating
+        vals[curr_position:curr_position + dstore_sizes[idx], :] = intermediate_vals
+        curr_position += dstore_sizes[idx]
 
+
+        #os.remove(curr_dstore_mmap+'_vals.npy') # remove intermediate vals once finished concatenating
 
 if __name__ == '__main__':
     #merge_all(args.faiss_index, args.num_shards, args.faiss_out_path)
-    concatenate_vals(args.dstore_mmap, args.num_shards, args.dstore_out_path)
+    concatenate_vals(args.dstore_mmap, int(args.num_shards), args.dstore_out_path, args.dstore_sizes_path)

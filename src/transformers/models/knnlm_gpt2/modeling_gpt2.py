@@ -992,6 +992,7 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
 
         knnlm_args.num_shards            = getattr(knnlm_args, 'num_shards', self.config.num_shards)
         knnlm_args.use_gpu_faiss         = getattr(knnlm_args, 'use_gpu_faiss', self.config.use_gpu_faiss)
+        knnlm_args.shard_idxs_used       = getattr(knnlm_args, 'shard_idxs_used', self.config.shard_idxs_used)
 
         return knnlm_args
 

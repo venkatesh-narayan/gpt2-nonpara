@@ -282,6 +282,8 @@ class BaseLM(LM):
             batched_inps = torch.cat(inps, dim=0)  # [batch, padding_length]
             multi_logits = F.log_softmax(self._model_call(batched_inps), dim=-1).cpu()  # [batch, padding_length, vocab]
 
+            tokenizer_REMOVE_LATER = GPT2Tokenizer.from_pretrained('gpt2-large', use_fast=True)
+
             for (cache_key, _, _), logits, inp, inplen, cont_toks \
                     in zip(chunk, multi_logits, inps, inplens, cont_toks_list):
 
@@ -294,12 +296,19 @@ class BaseLM(LM):
                 cont_toks = torch.tensor(cont_toks, dtype=torch.long).unsqueeze(0)  # [1, seq]
                 max_equal = (greedy_tokens == cont_toks).all()
 
+                print('inp: ', tokenizer_REMOVE_LATER.decode(inp.view(-1)))
+                print('model: ', tokenizer_REMOVE_LATER.decode(greedy_tokens.view(-1)), '(', greedy_tokens.view(-1), ')')
+                print('actual: ', tokenizer_REMOVE_LATER.decode(cont_toks.view(-1)), '(', cont_toks.view(-1), ')')
+                #print()
+
                 # Obtain log-probs at the corresponding continuation token indices
                 # last_token_slice = logits[:, -1, :].squeeze(0).tolist()
                 logits = torch.gather(logits, 2, cont_toks.unsqueeze(-1)).squeeze(-1)  # [1, seq]
 
                 # Answer: (log prob, is-exact-match)
                 answer = (float(logits.sum()), bool(max_equal))
+                print('answer: ', answer)
+                print()
 
                 # partial caching
                 if cache_key is not None:

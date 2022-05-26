@@ -21,6 +21,7 @@ parser.add_argument('--results_pathname', type=str, default='webtext_',
                     help='expected to be of the form [NAME]_[PERCENT]_percent_[LAMBDA], so make this value "[NAME]_"')
 parser.add_argument('--baseline_path', type=str, default='vanilla_gpt2_xl', help='path with the baseline results')
 parser.add_argument('--total_num_shards', type=int, default=200, help='total number of shards the data was split into')
+parser.add_argument('--plot', action='store_true')
 
 args = parser.parse_args()
 
@@ -105,7 +106,7 @@ def plot_results(args, out_path, plot=True, metric='eval_real_ppl', ylabel='perp
 
     return seen_lambdas, results, baseline, another_baseline
 
-seen_lambdas, results, baseline, another_baseline = plot_results(args, 'fig_webtext.png', plot=True)
+seen_lambdas, results, baseline, another_baseline = plot_results(args, 'fig_webtext.png', plot=args.plot)
 
 # display
 print(f'gpt2-xl real ppl = {baseline}')

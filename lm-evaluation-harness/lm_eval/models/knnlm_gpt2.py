@@ -4,9 +4,9 @@ from lm_eval.base import BaseLM
 import os
 
 class knnlmHFLM(BaseLM):
-    def __init__(self, dstore_mmap, faiss_index, dstore_sizes_path, num_shards, lmbda=0.25, stride=512,
-                 device='cuda:0', pretrained='gpt2-large', use_gpu_faiss=True, revision='main', subfolder=None, tokenizer=None,
-                 batch_size=1, root_path='/projects/tir3/users/junxianh/venkaten/gpt2-nonpara'):
+    def __init__(self, dstore_mmap, faiss_index, dstore_sizes_path, num_shards, lmbda=0.25, stride=512, device='cuda:0',
+                 pretrained='gpt2-large', use_gpu_faiss=True, exclude_shards='[]', include_shards='[]', revision='main',
+                 subfolder=None, tokenizer=None, batch_size=1, root_path='/projects/tir3/users/junxianh/venkaten/gpt2-nonpara'):
         super().__init__()
 
         # if passing in arguments, they'll probably be stored as strings -- convert to correct dtype
@@ -14,6 +14,26 @@ class knnlmHFLM(BaseLM):
         stride = int(stride)
         lmbda = float(lmbda)
         num_shards = int(num_shards)
+
+        # for now, include_shards and exclude_shards aren't being used, so these next set of lines don't matter too much
+        exclude_shards = exclude_shards[1:-1] # remove brackets
+        include_shards = include_shards[1:-1]
+
+        exclude_shards = exclude_shards.split(' ') # assuming that they're space separated bc the model args are comma separated
+        include_shards = include_shards.split(' ')
+
+        if exclude_shards == ['']:
+            exclude_shards = []
+        else:
+            exclude_shards = [int(shard) for shard in exclude_shards] # convert to int
+
+        if include_shards == ['']:
+            include_shards = []
+        else:
+            include_shards = [int(shard) for shard in include_shards]
+
+        shard_idxs_used = [x for x in range(num_shards) if x not in exclude_shards] # remove parts from exclude_shards
+        shard_idxs_used.extend(include_shards) # add all the include shards
 
         assert isinstance(device, str)
         assert isinstance(pretrained, str)
@@ -39,6 +59,7 @@ class knnlmHFLM(BaseLM):
         config.lmbda = lmbda
         config.num_shards = num_shards
         config.use_gpu_faiss = use_gpu_faiss
+        config.shard_idxs_used = shard_idxs_used
 
         # pretrained tokenizer for neo is broken for now so just hard-coding this to gpt2
         # using GPT2Tokenizer instead of AutoTokenizer
