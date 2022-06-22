@@ -296,9 +296,9 @@ class BaseLM(LM):
                 cont_toks = torch.tensor(cont_toks, dtype=torch.long).unsqueeze(0)  # [1, seq]
                 max_equal = (greedy_tokens == cont_toks).all()
 
-                print('inp: ', tokenizer_REMOVE_LATER.decode(inp.view(-1)))
-                print('model: ', tokenizer_REMOVE_LATER.decode(greedy_tokens.view(-1)), '(', greedy_tokens.view(-1), ')')
-                print('actual: ', tokenizer_REMOVE_LATER.decode(cont_toks.view(-1)), '(', cont_toks.view(-1), ')')
+                # print('inp: ', tokenizer_REMOVE_LATER.decode(inp.view(-1)))
+                # print('model: ', tokenizer_REMOVE_LATER.decode(greedy_tokens.view(-1)), '(', greedy_tokens.view(-1), ')')
+                # print('actual: ', tokenizer_REMOVE_LATER.decode(cont_toks.view(-1)), '(', cont_toks.view(-1), ')')
                 #print()
 
                 # Obtain log-probs at the corresponding continuation token indices
@@ -307,8 +307,8 @@ class BaseLM(LM):
 
                 # Answer: (log prob, is-exact-match)
                 answer = (float(logits.sum()), bool(max_equal))
-                print('answer: ', answer)
-                print()
+                # print('answer: ', answer)
+                # print()
 
                 # partial caching
                 if cache_key is not None:
