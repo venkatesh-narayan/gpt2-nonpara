@@ -8,7 +8,7 @@ This was also made to use under SLURM.
 
 ## Usage
 
-We provide two approaches to run our code: with and without sharding of the dataset. Dataset sharding is NECESSARY for large datasets and is generally the more efficient approach to use when you have more than one GPU available, as the datastores and indexes for each shard will be built in parallel; plus, because each shard is smaller, it will take less time to build each individual shard.
+We provide two approaches to build datastores and indexes with our knn+GPT-2 model: with and without sharding of the dataset. Dataset sharding is NECESSARY for large datasets and is generally the more efficient approach to use when you have more than one GPU available, as the datastores and indexes for each shard will be built in parallel; plus, because each shard is smaller, it will take less time to build each individual shard.
 
 ### Sharding Approach
 
