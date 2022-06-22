@@ -2,6 +2,8 @@
 
 This repository contains code that can use the [kNNLM](https://arxiv.org/pdf/1911.00172.pdf) logic for HuggingFace's GPT-2 model; the changes were made to a copy of the GPT-2 branch, and the main code is [here](/src/transformers/models/knnlm_gpt2/modeling_gpt2.py). We also made some changes to [Trainer](/src/transformers/trainer.py) and [run_clm.py](/examples/pytorch/language-modeling/run_clm.py), and had other minor edits to other pieces of the repository that allowed this entire process to work. We also cloned [fairseq](/src/transformers/fairseq) and [fairseq_cli](/src/transformers/fairseq_cli) from the kNNLM repository. We have also implemented a strided sliding context window to get more accurate perplexity scores.
 
+Our conda environment yml is [here](/knnlm_environment.yml), please make sure to use this, as certain things might not work if you don't have this environment.
+
 This was also made to use under SLURM.
 
 ## Usage
