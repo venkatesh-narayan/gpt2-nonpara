@@ -856,6 +856,15 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
 
     def __init__(self, config):
         super().__init__(config)
+
+        # self.model_kwargs = model_kwargs
+        # if not model_kwargs["knnlm"] and not model_kwargs["save_knnlm_dstore"]:
+        #     raise ValueError("need at least one of knnlm and save_knnlm_dstore to be true!")
+        # if model_kwargs["dstore_mmap"] is None:
+        #     raise ValueError("no dstore mmap found!")
+        # if model_kwargs["knnlm"] and model_kwargs["faiss_index"] is None:
+        #     raise ValueError("no faiss index found!")
+
         self.transformer = GPT2Model(config)
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 
@@ -880,9 +889,6 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
             faiss_path = self.knnlm_args.faiss_index
             if faiss_path is None:
                 raise ValueError("provide faiss index path")
-            else:
-                if not os.path.exists(faiss_path + '.trained'):
-                    raise ValueError("no trained faiss index!")
 
             # at this point, we should be able to make KNN_Dstore
             self.knn_dstore = KNN_Dstore(self.knnlm_args,
@@ -970,27 +976,31 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
 
         knnlm_args.output_word_probs     = getattr(knnlm_args, 'output_word_probs', False)
         knnlm_args.output_word_stats     = getattr(knnlm_args, 'output_word_stats', False)
-        knnlm_args.context_window        = getattr(knnlm_args, 'context_window', 512) # context window size was 1536 for default knnlm but my stride value from run_clm.py was 512
+        knnlm_args.context_window        = getattr(knnlm_args, 'context_window', self.config.stride)
         knnlm_args.softmax_batch         = getattr(knnlm_args, 'softmax_batch', 1024)
         knnlm_args.lm_eval               = getattr(knnlm_args, 'lm_eval', self.training)
-        knnlm_args.knnlm                 = getattr(knnlm_args, 'knnlm', True)
-        knnlm_args.save_knnlm_dstore     = getattr(knnlm_args, 'save_knnlm_dstore', True) # initially, save the dstore
+        knnlm_args.knnlm                 = getattr(knnlm_args, 'knnlm', self.config.knnlm)
+        knnlm_args.save_knnlm_dstore     = getattr(knnlm_args, 'save_knnlm_dstore', self.config.save_knnlm_dstore)
 
-        knnlm_args.dstore_mmap           = getattr(knnlm_args, 'dstore_mmap', 'checkpoints/dstore') # default save location
-        knnlm_args.dstore_size           = getattr(knnlm_args, 'dstore_size', 119721489) # total length of training tokens
+        knnlm_args.dstore_mmap           = getattr(knnlm_args, 'dstore_mmap', self.config.dstore_mmap)
+        knnlm_args.dstore_size           = getattr(knnlm_args, 'dstore_size', self.config.dstore_size)
 
         knnlm_args.knn_keytype           = getattr(knnlm_args, 'knn_keytype', 'last_ffn_input')
         knnlm_args.dstore_fp16           = getattr(knnlm_args, 'dstore_fp16', True)
-        knnlm_args.lmbda                 = getattr(knnlm_args, 'lmbda', 0.25) # might need to change this
-        knnlm_args.tokens_per_sample     = getattr(knnlm_args, 'tokens_per_sample', 1024) # tokens per sample was 1536 in default knnlm but i think it should be 1024 here
+        knnlm_args.lmbda                 = getattr(knnlm_args, 'lmbda', self.config.lmbda)
+        knnlm_args.tokens_per_sample     = getattr(knnlm_args, 'tokens_per_sample', self.config.stride)
+
+        knnlm_args.num_shards            = getattr(knnlm_args, 'num_shards', self.config.num_shards)
+        knnlm_args.use_gpu_faiss         = getattr(knnlm_args, 'use_gpu_faiss', self.config.use_gpu_faiss)
+        knnlm_args.shard_idxs_used       = getattr(knnlm_args, 'shard_idxs_used', self.config.shard_idxs_used)
 
         return knnlm_args
 
     # add args that aren't in knnlm/fairseq/models/transformer_lm.py
     def add_other_needed_args(self, knnlm_args, config):
         knnlm_args.dstore_filename    = getattr(knnlm_args, 'dstore_filename', knnlm_args.dstore_mmap)
-        knnlm_args.faiss_index        = getattr(knnlm_args, 'faiss_index', 'checkpoints/knn.index') # default save location
-        knnlm_args.indexfile          = getattr(knnlm_args, 'indexfile', 'checkpoints/knn.index')
+        knnlm_args.faiss_index        = getattr(knnlm_args, 'faiss_index', self.config.faiss_index)
+        knnlm_args.indexfile          = getattr(knnlm_args, 'indexfile', self.config.faiss_index)
         knnlm_args.k                  = getattr(knnlm_args, 'k', 32)
         knnlm_args.faiss_metric_type  = getattr(knnlm_args, 'faiss_metric_type', 'l2')
         knnlm_args.knn_sim_func       = getattr(knnlm_args, 'knn_sim_func', 'do_not_recomp_l2')
@@ -1126,16 +1136,21 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
             # assume it's always last_ffn_input for now
             assert self.knnlm_args.knn_keytype == 'last_ffn_input'
             assert knn_emb is not None, "didn't get any knn embeddings!"
-            assert labels is not None # just a sanity check
 
             queries = knn_emb
 
             # print('going to start get_knn_log_prob')
             s = time.time()
             # padding is usually -100 in huggingface transformers models
-            knn_probs = self.knn_dstore.get_knn_log_prob(queries,
-                                                         labels,
-                                                         pad_idx=-100)
+            if labels is not None:
+                knn_probs = self.knn_dstore.get_knn_log_prob(queries,
+                                                             labels,
+                                                             pad_idx=-100)
+
+            else:
+                knn_probs = self.knn_dstore.get_knn_log_prob(queries,
+                                                             input_ids,
+                                                             pad_idx=0) # for the eleutherai lm-eval
 
             # print(f'took {time.time() - s} seconds')
 
@@ -1149,18 +1164,48 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
             lm_logits = self.combine_knn_and_vocab_probs(knn_probs, lm_logits, self.knnlm_args.lmbda)
 
         loss = None
+        full_loss = None
         if labels is not None:
+            # Shift so that tokens < n predict n
+            shift_logits = lm_logits[..., :-1, :].contiguous()
+            shift_labels = labels[..., 1:].contiguous()
+            # Flatten the tokens
+            # loss_fct = CrossEntropyLoss()
+            # loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+
+            # we pass logits as per token loss so that we can compute the real perplexity
+            loss_fct = CrossEntropyLoss(reduction='none')
+            size_t = shift_labels.size()
+
+            loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+            loss = loss.view(*size_t)
+
+            full_loss = loss.detach()
+
+            padding_mask = shift_labels.eq(-100)
+            loss.masked_fill_(padding_mask, 0.0)
+
+            # import pdb; pdb.set_trace()
+            num_tokens = (shift_labels != -100).sum()
+            loss = loss.sum() / num_tokens
+
+            '''
+            this is the older version; the replaced version (above) allows for better ppl calculations due
+            to using all tokens
+
             # Shift so that tokens < n predict n
             shift_logits = lm_logits[..., :-1, :].contiguous()
             shift_labels = labels[..., 1:].contiguous()
             # Flatten the tokens
             loss_fct = CrossEntropyLoss()
             loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+            '''
 
         if not return_dict:
             output = (lm_logits,) + transformer_outputs[1:]
             return ((loss,) + output) if loss is not None else output
 
+        # import pdb; pdb.set_trace()
         return CausalLMOutputWithCrossAttentions(
             loss=loss,
             logits=lm_logits,
@@ -1168,7 +1213,8 @@ class knnlmGPT2LMHeadModel(GPT2PreTrainedModel):
             hidden_states=transformer_outputs.hidden_states,
             attentions=transformer_outputs.attentions,
             cross_attentions=transformer_outputs.cross_attentions,
-            knn_emb=knn_emb
+            knn_emb=knn_emb if self.knnlm_args.save_knnlm_dstore else None,
+            full_loss=full_loss,
         )
 
     @staticmethod

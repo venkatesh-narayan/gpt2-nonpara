@@ -1171,6 +1171,13 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin, PushToHubMix
         _fast_init = kwargs.pop("_fast_init", True)
         torch_dtype = kwargs.pop("torch_dtype", None)
 
+        # for knnlm
+        # knnlm = kwargs.pop("knnlm", False)
+        # save_knnlm_dstore = kwargs.pop("save_knnlm_dstore", False)
+        # dstore_mmap = kwargs.pop("dstore_mmap", None)
+        # faiss_index = kwargs.pop("faiss_index", None)
+        # dstore_size = kwargs.pop("dstore_size", None)
+
         from_pt = not (from_tf | from_flax)
 
         user_agent = {"file_type": "model", "framework": "pytorch", "from_auto_class": from_auto_class}
@@ -1201,6 +1208,14 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin, PushToHubMix
             )
         else:
             model_kwargs = kwargs
+
+        # add knnlm args to model_kwargs
+        # change this so that only knnlm model gets these kwargs
+        # model_kwargs["knnlm"] = knnlm
+        # model_kwargs["save_knnlm_dstore"] = save_knnlm_dstore
+        # model_kwargs["dstore_mmap"] = dstore_mmap
+        # model_kwargs["faiss_index"] = faiss_index
+        # model_kwargs["dstore_size"] = dstore_size
 
         # Load model
         if pretrained_model_name_or_path is not None:

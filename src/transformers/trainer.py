@@ -359,6 +359,8 @@ class Trainer:
         self.eval_dataset = eval_dataset
         self.tokenizer = tokenizer
 
+        print(self.place_model_on_device)
+        print(f'------device: {args.device}')
         if self.place_model_on_device:
             self._move_model_to_device(model, args.device)
 
@@ -958,7 +960,11 @@ class Trainer:
 
         # Multi-gpu training (should be after apex fp16 initialization)
         if self.args.n_gpu > 1:
-            model = nn.DataParallel(model)
+            # ADDED "if training" FOR KNNLM; only doing evaluation, so there's no point in using dataparallel
+            # easier to have multiple gpus, so that some can be used to split for faiss index search/retrieval,
+            # but still only use one gpu for the model
+            if training:
+                model = nn.DataParallel(model)
 
         # Note: in torch.distributed mode, there's no point in wrapping the model
         # inside a DistributedDataParallel as we'll be under `no_grad` anyways.
@@ -1848,33 +1854,35 @@ class Trainer:
             labels = passed_labels # used to be none -- added passed labels to ensure that we get some labels for knnlm
         outputs = model(**inputs)
 
-        assert labels is not None # just a sanity check
+        # assert labels is not None # just a sanity check
 
         # labels are not shifted by this point, so shift them
         # import pdb; pdb.set_trace()
-        shifted_labels = torch.roll(labels, shifts=-1, dims=1)
-        shifted_labels[:, -1] = model.config.eos_token_id
+        #shifted_labels = torch.roll(labels, shifts=-1, dims=1)
+        #shifted_labels[:, -1] = model.config.eos_token_id
 
         # for knnlm -- writing to datastore
         if hasattr(model, 'knnlm_args'):
             #print(f'save dstore: {model.knnlm_args.save_knnlm_dstore}')
             if model.knnlm_args.save_knnlm_dstore:
-                assert model.start_idxs is not None # sanity check
+                assert self.start_idxs is not None # sanity check
 
                 #import pdb; pdb.set_trace()
-                for i in range(len(model.start_idxs)):
-                    dkeys = outputs.knn_emb[i, model.start_idxs[i]:, :]
+                for i in range(len(self.start_idxs)):
+                    dkeys = outputs.knn_emb[i, self.start_idxs[i][0]:self.start_idxs[i][1], :]
                     assert dkeys is not None # just a sanity check
 
-                    stripped_labels = shifted_labels[i, model.start_idxs[i]:]
-                    stripped_labels = stripped_labels[stripped_labels.ne(-100)]
+                    # get appropriate labels, then shift, as labels aren't shifted by this point
+                    stripped_labels = labels[i, self.start_idxs[i][0]:self.start_idxs[i][1]]
+                    stripped_labels = torch.roll(stripped_labels, shifts=-1, dims=0)
+                    stripped_labels[-1] = model.config.eos_token_id
+                    #stripped_labels = stripped_labels[stripped_labels.ne(-100)]
 
                     shape = dkeys.shape
                     if shape[0] == model.knnlm_args.tokens_per_sample:
                         if self.dstore_idx + shape[0] > model.knnlm_args.dstore_size:
                             shape = [model.knnlm_args.dstore_size - self.dstore_idx]
                             dkeys = dkeys[:shape[0]]
-
 
                         # sanity check
                         assert shape[0] == len(stripped_labels)
@@ -1894,7 +1902,6 @@ class Trainer:
                         self.dstore_idx += shape[0]
                     else:
                         print('Skipping this one with shape', shape)
-
 
         # Save past state if it exists
         # TODO: this needs to be fixed and made cleaner later.
@@ -2320,10 +2327,6 @@ class Trainer:
                                                     dtype=np.int, mode='w+',
                                                     shape=(model.knnlm_args.dstore_size, 1))
 
-            model.knnlm_args.context_window = model.stride
-            model.knnlm_args.tokens_per_sample = model.stride
-
-
         observed_num_examples = 0
         # Main evaluation loop
         for step, inputs in enumerate(dataloader):
@@ -2335,18 +2338,17 @@ class Trainer:
                 if batch_size is None:
                     batch_size = observed_batch_size
 
-            #import pdb; pdb.set_trace();
-            if hasattr(model, 'knnlm_args'):
-                model.start_idxs = [0] * batch_size
-                #for i in range(batch_size):
-                #    model.start_idxs.append(min(model.config.n_positions, i * (model.config.n_positions - model.stride)))
-
-                #model.start_idxs = [max(i + model.stride - model.config.n_positions, 0) for i in range(model.config.n_positions - model.stride, inputs["input_ids"].size(1), model.stride)]
-            #self.end_loc = [min(i + model.stride, inputs["input_ids"].size(1)) for i in range(model.config.n_positions - model.stride, inputs["input_ids"].size(1), model.stride)][-1]
+            if hasattr(model, "knnlm_args"):
+                self.start_idxs = [] # contains tuples of start and end locations per batch
+                for i in range(inputs["labels"].shape[0]):
+                    curr_label = inputs["labels"][i, :] # get current (unshifted) label
+                    indices = torch.nonzero(curr_label != -100)
+                    self.start_idxs.append((indices[0].item(), indices[-1].item() + 1)) # last is exclusive
 
             # Prediction step
             #print(f'currently on step: {step}')
             #print('about to enter prediction step')
+            #import pdb; pdb.set_trace()
             loss, logits, labels = self.prediction_step(model, inputs, prediction_loss_only, ignore_keys=ignore_keys)
 
             # import pdb; pdb.set_trace()
@@ -2585,6 +2587,8 @@ class Trainer:
         logits = nested_detach(logits)
         if len(logits) == 1:
             logits = logits[0]
+
+        # import pdb; pdb.set_trace()
 
         return (loss, logits, labels)
 

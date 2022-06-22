@@ -27,6 +27,8 @@ import sys
 from dataclasses import dataclass, field
 from typing import Optional
 
+import numpy as np
+
 import datasets
 from datasets import load_dataset
 
@@ -49,6 +51,9 @@ from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version
 from transformers.utils.versions import require_version
 
+from sacremoses import MosesTokenizer, MosesDetokenizer
+
+mt = MosesTokenizer(lang='en')
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 check_min_version("4.10.0.dev0")
@@ -60,6 +65,56 @@ logger = logging.getLogger(__name__)
 
 MODEL_CONFIG_CLASSES = list(MODEL_FOR_CAUSAL_LM_MAPPING.keys())
 MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
+
+@dataclass
+class KnnArguments:
+    is_knnlm_model: bool = field(
+        default=False, metadata={"help": "tells whether or not the model is a knnlm_* model"}
+    )
+
+    knnlm: bool = field(
+        default=False, metadata={"help": "use knnlm to influence probabilities; note that this cannot be true while save_knnlm_dstore is true"}
+    )
+
+    save_knnlm_dstore: bool = field(
+        default=False, metadata={"help": "save knnlm dstore; note that this cannot be true while knnlm is true"}
+    )
+
+    dstore_mmap: Optional[str] = field(
+        default=None, metadata={"help": "dstore mmap location"}
+    )
+
+    dstore_size: Optional[int] = field(
+        default=0, metadata={"help": "size of dstore. DO NOT PROVIDE IF USING SHARD APPROACH"}
+    )
+
+    dstore_sizes: str = field(
+        default='webtext_dstore_sizes.txt', metadata={"help": "location of txt file with all dstore sizes"}
+    )
+
+    faiss_index: Optional[str] = field(
+        default=None, metadata={"help": "faiss_index location"}
+    )
+
+    lmbda: Optional[float] = field(
+        default=0.25, metadata={"help": "knn interpolation coefficient"}
+    )
+
+    num_shards: Optional[int] = field(
+        default=0, metadata={"help": "number of shards to use"}
+    )
+
+    exclude_shards: Optional[list] = field(
+        default=None, metadata={"help": "specify which shards you want to exclude (from 0 to num_shards)"}
+    )
+
+    include_shards: Optional[list] = field(
+        default=None, metadata={"help": "specify which extra shards you want to include (from num_shards to total_shards)"}
+    )
+
+    use_gpu_faiss: bool = field(
+        default=False, metadata={"help": "whether or not to use gpu for faiss indexes"}
+    )
 
 
 @dataclass
@@ -93,7 +148,7 @@ class ModelArguments:
         default=None, metadata={"help": "Pretrained tokenizer name or path if not the same as model_name"}
     )
     cache_dir: Optional[str] = field(
-        default=None,
+        default="checkpoints/hf",
         metadata={"help": "Where do you want to store the pretrained models downloaded from huggingface.co"},
     )
     use_fast_tokenizer: bool = field(
@@ -110,18 +165,6 @@ class ModelArguments:
             "help": "Will use the token generated when running `transformers-cli login` (necessary to use this script "
             "with private models)."
         },
-    )
-
-    is_knnlm_model: bool = field(
-            default=False, metadata={"help": "tells whether or not the model is a knnlm_* model"}
-    )
-
-    knnlm: bool = field(
-        default=False, metadata={"help": "use knnlm to influence probabilities; note that this cannot be true while save_knnlm_dstore is true"}
-    )
-
-    save_knnlm_dstore: bool = field(
-        default=False, metadata={"help": "save knnlm dstore; note that this cannot be true while knnlm is true"}
     )
 
     def __post_init__(self):
@@ -217,13 +260,13 @@ def main():
     # or by passing the --help flag to this script.
     # We now keep distinct sets of args, for a cleaner separation of concerns.
 
-    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, TrainingArguments))
+    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, TrainingArguments, KnnArguments))
     if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
         # If we pass only one argument to the script and it's the path to a json file,
         # let's parse it to get our arguments.
-        model_args, data_args, training_args = parser.parse_json_file(json_file=os.path.abspath(sys.argv[1]))
+        model_args, data_args, training_args, knn_args = parser.parse_json_file(json_file=os.path.abspath(sys.argv[1]))
     else:
-        model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+        model_args, data_args, training_args, knn_args = parser.parse_args_into_dataclasses()
 
     # Setup logging
     logging.basicConfig(
@@ -366,11 +409,63 @@ def main():
         )
 
     # pass tokenizer for debug purpose
-    config.tokenizer = tokenizer
+    # config.tokenizer = tokenizer
+    config.tokenizer = None
+
+    # put generation args into config
+    for k, v in vars(knn_args).items():
+        setattr(config, k, v)
+
+    if knn_args.is_knnlm_model:
+        if knn_args.dstore_size > 0:
+            print('SETTING DSTORE SIZE TO ', knn_args.dstore_size)
+            setattr(config, 'dstore_size', knn_args.dstore_size)
+
+            # assuming dstore_size is only provided when not using sharded approach
+            print('SHARD_IDXS_USED: ', [])
+            setattr(config, 'shard_idxs_used', [])
+        elif os.path.exists(knn_args.dstore_sizes):
+            shard_idxs_used = []
+            with open(knn_args.dstore_sizes, 'r') as f:
+                dstore_size = 0
+                for i, line in enumerate(f):
+                    if i >= knn_args.num_shards:
+                        # if include shards is provided, include any i from that list; otherwise,
+                        # no need to continue, just break
+                        if knn_args.include_shards is not None:
+                            if i in knn_args.include_shards:
+                                dstore_size += int(line.split(' ')[1])
+                                shard_idxs_used.append(i)
+                        else:
+                            break
+
+                    else:
+                        # i is in [0 to num_shards) -- if exclude shards is provided, don't include any
+                        # i's from that list; otherwise, just add everything
+                        if knn_args.exclude_shards is not None:
+                            if i not in knn_args.exclude_shards:
+                                dstore_size += int(line.split(' ')[1])
+                                shard_idxs_used.append(i)
+                        else:
+                            dstore_size += int(line.split(' ')[1])
+                            shard_idxs_used.append(i)
+
+                print('SETTING DSTORE SIZE TO ', dstore_size)
+                setattr(config, 'dstore_size', dstore_size)
+                print('SHARD IDXS USED: ', shard_idxs_used)
+                setattr(config, 'shard_idxs_used', shard_idxs_used)
+        else:
+            raise ValueError('cannot figure out dstore size!')
+
+    stride = min(tokenizer.model_max_length, data_args.stride) # for sliding window context
+    config.stride = stride
+
+    # save memory
+    config.keys_to_ignore_at_inference = ["logits", "past_key_values"]
 
     # change model from auto to knnlmgpt2
     if model_args.model_name_or_path:
-        if model_args.is_knnlm_model:
+        if knn_args.is_knnlm_model:
             model = knnlmGPT2LMHeadModel.from_pretrained(
                 model_args.model_name_or_path,
                 from_tf=bool(".ckpt" in model_args.model_name_or_path),
@@ -379,10 +474,6 @@ def main():
                 revision=model_args.model_revision,
                 use_auth_token=True if model_args.use_auth_token else None,
             )
-
-            model.knnlm_args.save_knnlm_dstore = model_args.save_knnlm_dstore
-            model.knnlm_args.knnlm = model_args.knnlm
-
         else:
             model = GPT2LMHeadModel.from_pretrained(
                 model_args.model_name_or_path,
@@ -398,9 +489,6 @@ def main():
             model = knnlmGPT2LMHeadModel.from_config(config)
             n_params = sum(dict((p.data_ptr(), p.numel()) for p in model.parameters()).values())
             logger.info(f"Training new model from scratch - Total size={n_params/2**20:.2f}M params")
-
-            model.knnlm_args.save_knnlm_dstore = model_args.save_knnlm_dstore
-            model.knnlm_args.knnlm = model_args.knnlm
         else:
             model = GPT2LMHeadModel.from_config(config)
             n_params = sum(dict((p.data_ptr(), p.numel()) for p in model.parameters()).values())
@@ -410,7 +498,7 @@ def main():
 
     # Preprocessing the datasets.
     # First we tokenize all the texts.
-    if training_args.do_train or model_args.save_knnlm_dstore or data_args.debug_custom:
+    if training_args.do_train or knn_args.save_knnlm_dstore or data_args.debug_custom:
         column_names = raw_datasets["train"].column_names
     else:
         column_names = raw_datasets["validation"].column_names
@@ -419,9 +507,7 @@ def main():
     # since this will be pickled to avoid _LazyModule error in Hasher force logger loading before tokenize_function
     tok_logger = transformers.utils.logging.get_logger("transformers.tokenization_utils_base")
 
-    stride = min(tokenizer.model_max_length, data_args.stride) # for sliding window context
     max_length = model.config.n_positions # default max len
-    setattr(model, 'stride', stride)
 
     #tokenizer.add_special_tokens({'pad_token': "[PAD]"})
     #model.resize_token_embeddings(len(tokenizer))
@@ -539,7 +625,7 @@ def main():
             desc=f"Grouping texts in chunks of {block_size}",
         )
 
-    if training_args.do_train or model_args.save_knnlm_dstore or data_args.debug_custom:
+    if training_args.do_train or knn_args.save_knnlm_dstore or data_args.debug_custom:
         if "train" not in tokenized_datasets:
             raise ValueError("--do_train requires a train dataset")
         train_dataset = lm_datasets["train"]
@@ -554,8 +640,46 @@ def main():
         if data_args.max_eval_samples is not None:
             eval_dataset = eval_dataset.select(range(data_args.max_eval_samples))
 
+    if training_args.do_predict:
+        if "test" not in tokenized_datasets:
+            raise ValueError("--do_predict requires a test dataset")
+        predict_dataset = lm_datasets["test"]
+
+        # if data_args.max_eval_samples is not None:
+        #     eval_dataset = eval_dataset.select(range(data_args.max_eval_samples))
+
+
+    def compute_metrics(eval_preds):
+        """compute (time-aware) perplexity
+        Args:
+            eval_preds: the per-token loss
+            eval_labels: a tuple with labels and times
+        """
+
+        def get_num_tokens(label):
+            """get the original number of tokens to
+            compute ppl
+            """
+            # import pdb; pdb.set_trace()
+
+            text = tokenizer.decode(label[label!=-100], skip_special_tokens=True)
+
+            return len(mt.tokenize(text, return_str=True).split())
+
+        res = {}
+        eval_preds, eval_labels = eval_preds.predictions, eval_preds.label_ids
+        # import pdb; pdb.set_trace()
+
+        if isinstance(eval_preds, tuple):
+            eval_preds = eval_preds[-1]
+
+        num_token_list = [get_num_tokens(x) for x in eval_labels]
+        res['real_ppl'] = math.exp(eval_preds.astype(np.float32).sum() / sum(num_token_list))
+
+        return res
+
     # Initialize our Trainer
-    if model_args.save_knnlm_dstore:
+    if knn_args.save_knnlm_dstore:
         trainer = Trainer(
             model=model,
             args=training_args,
@@ -564,6 +688,7 @@ def main():
             tokenizer=tokenizer,
             # Data collator will default to DataCollatorWithPadding, so we change it.
             data_collator=default_data_collator,
+            compute_metrics=compute_metrics, # added custom compute metrics to get real ppl
         )
 
     else:
@@ -576,6 +701,7 @@ def main():
             tokenizer=tokenizer,
             # Data collator will default to DataCollatorWithPadding, so we change it.
             data_collator=default_data_collator,
+            compute_metrics=compute_metrics, # added custom compute metrics to get real ppl
         )
 
     # Training
@@ -599,7 +725,7 @@ def main():
         trainer.save_metrics("train", metrics)
         trainer.save_state()
 
-    if model_args.save_knnlm_dstore:
+    if knn_args.save_knnlm_dstore:
         logger.info("*** Building Datastore ***")
 
         # changed trainer.evaluate() for knnlm
@@ -633,6 +759,24 @@ def main():
 
         trainer.log_metrics("eval", metrics)
         trainer.save_metrics("eval", metrics)
+
+    # Evaluation
+    if training_args.do_predict:
+        logger.info("*** predict ***")
+
+        # changed trainer.evaluate() for knnlm
+        metrics = trainer.predict(predict_dataset, metric_key_prefix="predict")
+
+        # max_eval_samples = data_args.max_eval_samples if data_args.max_eval_samples is not None else len(eval_dataset)
+        metrics["predict_samples"] = len(predict_dataset)
+        try:
+            perplexity = math.exp(metrics["predict_loss"])
+        except OverflowError:
+            perplexity = float("inf")
+        metrics["perplexity"] = perplexity
+
+        trainer.log_metrics("predict", metrics)
+        trainer.save_metrics("predict", metrics)
 
     if training_args.push_to_hub:
         kwargs = {"finetuned_from": model_args.model_name_or_path, "tasks": "text-generation"}
