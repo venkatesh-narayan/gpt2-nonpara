@@ -102,7 +102,7 @@ to evaluate. Example Usage:
 
 ## Results
 
-We found that we can compress language models roughly 2x while still maintaining perplexity. Results when finetuning GPT-2 (small, medium, large) with lmbda (interpolation coefficient) = 0.25 on WikiText-103:
+We found that we can compress language models roughly 2x while still maintaining perplexity. Results when finetuning GPT-2 (small, medium, large) with lmbda (knn interpolation coefficient) = 0.25 on WikiText-103:
 
 |                         | without datastores | with datastores |
 | :---:                   |    :----:          |          :---:  |
