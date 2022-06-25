@@ -99,3 +99,26 @@ to evaluate. Example Usage:
 ```python examples/pytorch/language-modeling/run_clm.py --model_name_or_path checkpoints/wikitext/20211104/gpt2-large.wikitext.warm5000.wd0/checkpoint-27000 --dataset_name wikitext --dataset_config_name wikitext-103-raw-v1 --stride 512 --is_knnlm_model --save_knnlm_dstore --dstore_mmap checkpoints/finetuned/large/stride_512/dstore --dstore_size 119721489 --faiss_index checkpoints/finetuned/large/stride_512/knn.index --per_device_eval_batch_size 1 --output_dir ./finetuned_gpt2_large_512 --report_to none```
 
 ```python examples/pytorch/language-modeling/run_clm.py --model_name_or_path checkpoints/wikitext/20211104/gpt2-large.wikitext.warm5000.wd0/checkpoint-27000 --dataset_name wikitext --dataset_config_name wikitext-103-raw-v1 --stride 512 --is_knnlm_model --knnlm --dstore_mmap checkpoints/finetuned/large/stride_512/dstore --dstore_size 119721489 --faiss_index checkpoints/finetuned/large/stride_512/knn.index --do_eval --per_device_eval_batch_size 1 --output_dir ./finetuned_gpt2_large_512 --report_to none```
+
+## Results
+
+We found that we can compress language models roughly 2x while still maintaining perplexity. Results when finetuning GPT-2 (small, medium, large) with lmbda (interpolation coefficient) = 0.25 on WikiText-103:
+
+|                         | without datastores | with datastores |
+| :---:                   |    :----:          |          :---:  |
+| finetuned GPT-2 small   | 20.1061            | 17.3885         |
+| finetuned GPT-2 medium  | 15.5473            | 14.5006         |
+| finetuned GPT-2 large   | 14.2402            | 14.2518         |
+
+knn+GPT-2 medium with datastores roughly matches performance of vanilla GPT-2 large (roughly 2x compressions). Results with WebText (using GPT-2 large for all experiments, evaluated on ```webtext_sample.txt``` mentioned above):
+
+|              | 5% of WebText as datastore | 10% of WebText as datastore | 15% of WebText as datastore |
+| :---:        | :---:                      | :---:                       | :---:                       |
+| lmbda = 0.1  | 27.4176191853286           | 26.9455812399045            | 26.6752954584162            |
+| lmbda = 0.15 | 27.9749199186074           | 27.3944552314854            | 27.0651302733705            |
+| lmbda = 0.2  | 28.7139431791088           | 28.030932597931             | 27.6453545320409            |
+| lmbda = 0.25 | 29.6472402648301           | 28.8572601967285            | 28.414472051711             |
+| lmbda = 0.3  | 30.7563195208855           | 29.8530413749539            | 29.3503394616832            |
+
+where the performance of vanilla GPT-2 large was 28.7592859157249 and the performance of vanilla GPT-2 XL was 26.5734591057441. As we can see, knn+GPT-2 large with only 15% of WebText as a datastore and lmbda = 0.1 roughly matches the performance of GPT-2 XL (again, roughly 2x compressions, without even needing the entire datastore).
+
